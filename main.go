@@ -30,6 +30,7 @@ import (
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/controllers"
+	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/inplace"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -43,6 +44,10 @@ var (
 	webhookCertDir       string
 	managerOptions       = flags.ManagerOptions{}
 	logOptions           = logs.NewOptions()
+
+	enableRuntimeExtension  bool
+	runtimeExtensionPort    int
+	runtimeExtensionCertDir string
 )
 
 func InitFlags(fs *pflag.FlagSet) {
@@ -62,6 +67,16 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
+
+	fs.BoolVar(&enableRuntimeExtension, "enable-runtime-extension", false,
+		"Serve the Cluster API in-place update hooks (CanUpdateMachine, CanUpdateMachineSet, UpdateMachine). "+
+			"Requires the InPlaceUpdates feature gate on the core Cluster API controllers and an ExtensionConfig pointing at this server.")
+
+	fs.IntVar(&runtimeExtensionPort, "runtime-extension-port", 9445,
+		"Port the runtime extension server binds to, only used when --enable-runtime-extension is set.")
+
+	fs.StringVar(&runtimeExtensionCertDir, "runtime-extension-cert-dir", "/tmp/k8s-runtime-extension-server/serving-certs/",
+		"Directory holding tls.crt and tls.key for the runtime extension server, only used when --enable-runtime-extension is set.")
 
 	flags.AddManagerOptions(fs, &managerOptions)
 
@@ -157,6 +172,20 @@ func setupReconcilers(ctx context.Context, mgr manager.Manager) {
 	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosConfig")
 		os.Exit(1)
+	}
+
+	if enableRuntimeExtension {
+		setupLog.Info("enabling the in-place update runtime extension", "port", runtimeExtensionPort)
+
+		handler := inplace.NewHandler(mgr.GetClient(), inplace.NewNodeClient(mgr.GetClient()))
+
+		if err := inplace.AddToManager(mgr, handler, inplace.Options{
+			Port:    runtimeExtensionPort,
+			CertDir: runtimeExtensionCertDir,
+		}); err != nil {
+			setupLog.Error(err, "unable to start the in-place update runtime extension")
+			os.Exit(1)
+		}
 	}
 }
 

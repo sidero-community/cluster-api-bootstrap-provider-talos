@@ -33,6 +33,10 @@ spec:
             - containerPort: 8443
               name: metrics
               protocol: TCP
+            # Only served when --enable-runtime-extension is set; see docs/in-place-updates.md.
+            - containerPort: 9445
+              name: runtime-ext
+              protocol: TCP
           readinessProbe:
             httpGet:
               path: /readyz

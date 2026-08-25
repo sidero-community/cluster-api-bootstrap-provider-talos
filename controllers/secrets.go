@@ -166,16 +166,47 @@ func (r *TalosConfigReconciler) writeK8sCASecret(ctx context.Context, scope *Tal
 }
 
 // writeBootstrapData creates a new secret with the data passed in as input
-func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *TalosConfigScope, data []byte) (string, error) {
-	// Create bootstrap secret only if it doesn't already exist
+// writeBootstrapData persists the rendered machine configuration for a Machine.
+//
+// Bootstrap data is immutable for the life of a Machine under normal circumstances, so an
+// existing secret is left untouched. The exception is an in-place update, where the owning
+// controller has written a new desired spec and the node needs the regenerated
+// configuration; there the secret is rewritten in place, keeping its name so the Machine's
+// bootstrap reference stays valid.
+//
+// configHash is recorded on the secret so the in-place update extension can distinguish a
+// regenerated secret from one that still holds the pre-update configuration.
+func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *TalosConfigScope, data []byte, configHash string) (string, error) {
 	ownerName := scope.ConfigOwner.GetName()
 	dataSecretName := ownerName + "-bootstrap-data"
 
 	r.Log.Info("handling bootstrap data for ", "owner", ownerName)
 
-	_, err := r.fetchSecret(ctx, scope.Config, dataSecretName)
+	existing, err := r.fetchSecret(ctx, scope.Config, dataSecretName)
 	if err == nil {
-		return dataSecretName, nil
+		if !bootstrapv1beta1.IsInPlaceUpdate(scope.Config) {
+			return dataSecretName, nil
+		}
+
+		if existing.Annotations != nil && existing.Annotations[bootstrapv1beta1.InPlaceConfigHashAnnotation] == configHash {
+			// Already regenerated for this desired spec; rewriting would only churn the
+			// resourceVersion on every reconcile while the update is in progress.
+			return dataSecretName, nil
+		}
+
+		r.Log.Info("regenerating bootstrap data for in-place update", "owner", ownerName)
+
+		patched := existing.DeepCopy()
+		if patched.Annotations == nil {
+			patched.Annotations = map[string]string{}
+		}
+
+		patched.Annotations[bootstrapv1beta1.InPlaceConfigHashAnnotation] = configHash
+		patched.Data = map[string][]byte{
+			"value": data,
+		}
+
+		return dataSecretName, r.Client.Patch(ctx, patched, client.MergeFrom(existing))
 	}
 
 	if !k8serrors.IsNotFound(err) {
@@ -188,6 +219,9 @@ func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *T
 			Name:      dataSecretName,
 			Labels: map[string]string{
 				capiv1.ClusterNameLabel: scope.Cluster.Name,
+			},
+			Annotations: map[string]string{
+				bootstrapv1beta1.InPlaceConfigHashAnnotation: configHash,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(scope.Config, bootstrapv1beta1.GroupVersion.WithKind("TalosConfig")),

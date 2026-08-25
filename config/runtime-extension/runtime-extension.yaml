@@ -1,0 +1,54 @@
+# Manifests for the in-place update Runtime Extension served by CABPT.
+#
+# These are NOT part of the default kustomization: in-place updates are an alpha Cluster API
+# feature and must be opted into deliberately. See docs/in-place-updates.md.
+#
+# Applying them requires:
+#   * the InPlaceUpdates feature gate on the core Cluster API controllers and on CACPPT
+#   * --enable-runtime-extension on the CABPT manager
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: runtime-extension-cert
+  namespace: system
+spec:
+  dnsNames:
+    - cabpt-runtime-extension.$(SERVICE_NAMESPACE).svc
+    - cabpt-runtime-extension.$(SERVICE_NAMESPACE).svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: cabpt-runtime-extension-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cabpt-runtime-extension
+  namespace: system
+spec:
+  selector:
+    # Must match the manager Deployment's pod labels.
+    control-plane: controller-manager
+  ports:
+    - port: 443
+      targetPort: runtime-ext
+      protocol: TCP
+      name: https
+---
+apiVersion: runtime.cluster.x-k8s.io/v1beta2
+kind: ExtensionConfig
+metadata:
+  name: talos-in-place-updates
+  annotations:
+    # cert-manager injects the CA so the Cluster API controllers trust this server.
+    cert-manager.io/inject-ca-from: $(SERVICE_NAMESPACE)/runtime-extension-cert
+spec:
+  clientConfig:
+    service:
+      name: cabpt-runtime-extension
+      namespace: system
+      port: 443
+  # Empty selector: serve every namespace. Narrow this if the extension should only apply to
+  # some clusters.
+  namespaceSelector: {}

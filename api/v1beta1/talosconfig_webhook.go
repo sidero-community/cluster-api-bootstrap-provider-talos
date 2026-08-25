@@ -44,7 +44,12 @@ func (r *TalosConfig) ValidateUpdate(ctx context.Context, oldObj *TalosConfig, n
 	}
 
 	// Skip the immutability check if the request is a dry-run issued by the topology controller (#257)
-	if !topology.IsDryRunRequest(req, r) && !cmp.Equal(r.Spec, old.Spec) {
+	// An in-place update requires the owning controller to write the desired bootstrap config
+	// onto the existing object. The owner stamps clusterv1.UpdateInProgressAnnotation and the
+	// desired spec in the same admission request (mirroring the KubeadmControlPlane
+	// triggerInPlaceUpdate flow), so checking the incoming object is sufficient here and
+	// immutability stays intact for every other caller.
+	if !topology.IsDryRunRequest(req, r) && !IsInPlaceUpdate(r) && !cmp.Equal(r.Spec, old.Spec) {
 		return nil, apierrors.NewBadRequest("TalosConfig.Spec is immutable")
 	}
 

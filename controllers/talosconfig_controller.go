@@ -234,7 +234,13 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// bail super early if it's already ready
-	if ptr.Deref(config.Status.Initialization.DataSecretCreated, false) {
+	//
+	// An in-place update is the one case where a ready config must be reconciled again: the
+	// owning controller has written a new desired spec onto the existing object and the
+	// rendered machine configuration has to be regenerated for the UpdateMachine hook to
+	// apply. The annotation is removed by the core Machine controller once the update
+	// completes, so this falls back to the fast path on its own.
+	if ptr.Deref(config.Status.Initialization.DataSecretCreated, false) && !bootstrapv1beta1.IsInPlaceUpdate(config) {
 		log.Info("ignoring an already ready config")
 		v1beta1conditions.MarkTrue(config, bootstrapv1beta1.DataSecretAvailableV1Beta1Condition)
 		conditions.Set(config, metav1.Condition{
@@ -448,9 +454,19 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		}
 	}
 
+	k8sVersion, err := kubernetesVersion(tcScope)
+	if err != nil {
+		return err
+	}
+
+	configHash, err := bootstrapv1beta1.InPlaceConfigHash(config.Spec, k8sVersion)
+	if err != nil {
+		return err
+	}
+
 	var dataSecretName string
 
-	dataSecretName, err = r.writeBootstrapData(ctx, tcScope, []byte(retData.BootstrapData))
+	dataSecretName, err = r.writeBootstrapData(ctx, tcScope, []byte(retData.BootstrapData), configHash)
 	if err != nil {
 		return err
 	}
@@ -521,6 +537,40 @@ func (r *TalosConfigReconciler) userConfigs(ctx context.Context, scope *TalosCon
 	return retBundle, nil
 }
 
+// kubernetesVersion returns the Kubernetes version the machine configuration should be
+// rendered for, taken from the config owner and normalised to Talos' unprefixed form.
+//
+// This is shared between config generation and the in-place config hash so that the hash
+// stamped on the bootstrap data secret is derived from exactly the value that was rendered.
+func kubernetesVersion(scope *TalosConfigScope) (string, error) {
+	// Allow user to override default kube version.
+	// This also handles version being formatted like "vX.Y.Z" instead of without leading 'v'
+	// TrimPrefix returns the string unchanged if the prefix isn't present.
+	if scope.ConfigOwner.IsMachinePool() {
+		mp := &capiv1.MachinePool{}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(scope.ConfigOwner.Object, mp); err != nil {
+			return "", err
+		}
+
+		if mp.Spec.Template.Spec.Version != "" {
+			return strings.TrimPrefix(mp.Spec.Template.Spec.Version, "v"), nil
+		}
+
+		return constants.DefaultKubernetesVersion, nil
+	}
+
+	machine := &capiv1.Machine{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(scope.ConfigOwner.Object, machine); err != nil {
+		return "", err
+	}
+
+	if machine.Spec.Version != "" {
+		return strings.TrimPrefix(machine.Spec.Version, "v"), nil
+	}
+
+	return constants.DefaultKubernetesVersion, nil
+}
+
 // genConfigs will generate a bootstrap config and a talosconfig to return
 func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConfigScope) (*TalosConfigBundle, []string, error) {
 	retBundle := &TalosConfigBundle{}
@@ -533,26 +583,9 @@ func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConf
 
 	patches := []string{}
 
-	// Allow user to override default kube version.
-	// This also handles version being formatted like "vX.Y.Z" instead of without leading 'v'
-	// TrimPrefix returns the string unchanged if the prefix isn't present.
-	k8sVersion := constants.DefaultKubernetesVersion
-	if scope.ConfigOwner.IsMachinePool() {
-		mp := &capiv1.MachinePool{}
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(scope.ConfigOwner.Object, mp); err != nil {
-			return retBundle, patches, err
-		}
-		if mp.Spec.Template.Spec.Version != "" {
-			k8sVersion = strings.TrimPrefix(mp.Spec.Template.Spec.Version, "v")
-		}
-	} else {
-		machine := &capiv1.Machine{}
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(scope.ConfigOwner.Object, machine); err != nil {
-			return retBundle, patches, err
-		}
-		if machine.Spec.Version != "" {
-			k8sVersion = strings.TrimPrefix(machine.Spec.Version, "v")
-		}
+	k8sVersion, err := kubernetesVersion(scope)
+	if err != nil {
+		return retBundle, patches, err
 	}
 
 	clusterDNS := constants.DefaultDNSDomain
