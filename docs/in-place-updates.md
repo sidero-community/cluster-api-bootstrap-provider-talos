@@ -110,3 +110,25 @@ the whole control plane, because an in-place upgrade reboots the node.
 - MachinePools are not supported.
 - The Talos API interactions are covered by unit tests against a fake client. They have not
   been validated against real hardware — do that before relying on this in production.
+
+## Installer image resolution
+
+An infrastructure provider may publish `status.installerImage` on the InfraMachine to declare
+which Talos installer image a machine should run. CABPT reads that field generically — via
+unstructured access, with no import of any infrastructure provider — and injects it as
+`machine.install.image` when generating the machine configuration.
+
+It is applied *before* any `strategicPatches` in the TalosConfig, so an explicit patch still
+wins. The resolved image is a good default, not an override of intent.
+
+This is what closes the loop with the Talos `Upgrade` API: `UpdateMachine` compares
+`machine.install.image` against the node's running version, so an image resolved by the
+infrastructure provider becomes the image the node upgrades to in place.
+
+Because the injected image does not appear anywhere in `TalosConfig.spec`, it is included in
+the bootstrap data secret's config hash. Without that, changing the resolved image would
+change the rendered configuration while leaving the hash untouched, and the extension would
+mistake a stale secret for a fresh one.
+
+Cluster API Provider Tinkerbell resolves this field from a Talos Image Factory schematic
+built out of the machine's real hardware; see `docs/talos-image-factory.md` there.

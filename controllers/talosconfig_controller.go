@@ -403,8 +403,21 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		retData.BootstrapData = string(patchedBytes)
 	}
 
+	// The infrastructure provider may have resolved an installer image for this machine, e.g.
+	// from a Talos Image Factory schematic built out of its actual hardware. Apply it first so
+	// an explicit strategic patch in the TalosConfig still takes precedence.
+	installerImage, err := installerImageFor(ctx, r.Client, tcScope.ConfigOwner.Unstructured)
+	if err != nil {
+		return err
+	}
+
+	var resolvedPatches []string
+	if installerImage != "" {
+		resolvedPatches = append(resolvedPatches, installImagePatch(installerImage))
+	}
+
 	// Handle strategic merge patches.
-	if strategicPatches := slices.AppendSeq(config.Spec.StrategicPatches, slices.Values(multiConfigPatches)); len(strategicPatches) > 0 {
+	if strategicPatches := slices.Concat(resolvedPatches, config.Spec.StrategicPatches, multiConfigPatches); len(strategicPatches) > 0 {
 		patches := make([]configpatcher.Patch, 0, len(strategicPatches))
 
 		for _, strategicPatch := range strategicPatches {
@@ -459,7 +472,7 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		return err
 	}
 
-	configHash, err := bootstrapv1beta1.InPlaceConfigHash(config.Spec, k8sVersion)
+	configHash, err := bootstrapv1beta1.InPlaceConfigHash(config.Spec, k8sVersion, installerImage)
 	if err != nil {
 		return err
 	}

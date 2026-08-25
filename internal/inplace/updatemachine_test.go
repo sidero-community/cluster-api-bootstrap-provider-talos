@@ -145,6 +145,7 @@ func freshHash(t *testing.T) string {
 	hash, err := bootstrapv1beta1.InPlaceConfigHash(
 		bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"},
 		"1.34.0",
+		"",
 	)
 	require.NoError(t, err)
 

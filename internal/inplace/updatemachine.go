@@ -11,6 +11,8 @@ import (
 
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -162,7 +164,12 @@ func (h *Handler) desiredConfig(ctx context.Context, machine *clusterv1.Machine,
 		return nil, false, fmt.Errorf("bootstrap data secret %s has no value", key)
 	}
 
-	expected, err := desiredConfigHash(machine, bootstrapConfig)
+	installerImage, err := h.installerImage(ctx, machine)
+	if err != nil {
+		return nil, false, err
+	}
+
+	expected, err := desiredConfigHash(machine, bootstrapConfig, installerImage)
 	if err != nil {
 		return nil, false, err
 	}
@@ -178,7 +185,7 @@ func (h *Handler) desiredConfig(ctx context.Context, machine *clusterv1.Machine,
 
 // desiredConfigHash recomputes, from the desired objects in the hook request, the hash CABPT
 // stamps on a regenerated bootstrap data secret.
-func desiredConfigHash(machine *clusterv1.Machine, bootstrapConfig runtimeRawExtension) (string, error) {
+func desiredConfigHash(machine *clusterv1.Machine, bootstrapConfig runtimeRawExtension, installerImage string) (string, error) {
 	obj, err := rawToUnstructured(bootstrapConfig)
 	if err != nil {
 		return "", err
@@ -194,7 +201,7 @@ func desiredConfigHash(machine *clusterv1.Machine, bootstrapConfig runtimeRawExt
 		return "", fmt.Errorf("failed to decode desired TalosConfig spec: %w", err)
 	}
 
-	return bootstrapv1beta1.InPlaceConfigHash(spec, strings.TrimPrefix(machine.Spec.Version, "v"))
+	return bootstrapv1beta1.InPlaceConfigHash(spec, strings.TrimPrefix(machine.Spec.Version, "v"), installerImage)
 }
 
 // installImage reads machine.install.image out of a rendered Talos machine configuration.
@@ -265,4 +272,38 @@ func machineAddresses(machine *clusterv1.Machine) []string {
 	}
 
 	return out
+}
+
+// installerImage reads the installer image the infrastructure provider resolved for a machine.
+//
+// This is read from the live InfraMachine rather than taken from the hook request: Cluster API
+// strips status before sending, and the installer image lives in status. Without it the hash
+// recomputed here could not match the one CABPT stamped, and a genuinely fresh secret would be
+// mistaken for a stale one.
+func (h *Handler) installerImage(ctx context.Context, machine *clusterv1.Machine) (string, error) {
+	ref := machine.Spec.InfrastructureRef
+	if !ref.IsDefined() {
+		return "", nil
+	}
+
+	infra := &unstructured.Unstructured{}
+	infra.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   ref.APIGroup,
+		Version: "v1beta2",
+		Kind:    ref.Kind,
+	})
+
+	key := types.NamespacedName{Namespace: machine.Namespace, Name: ref.Name}
+	if err := h.client.Get(ctx, key, infra); err != nil {
+		// Treated as "no image resolved" rather than an error, matching how CABPT generates the
+		// configuration when the InfraMachine cannot be read.
+		return "", nil //nolint:nilerr // absence is the expected case
+	}
+
+	image, found, err := unstructured.NestedString(infra.Object, "status", "installerImage")
+	if err != nil || !found {
+		return "", nil
+	}
+
+	return image, nil
 }

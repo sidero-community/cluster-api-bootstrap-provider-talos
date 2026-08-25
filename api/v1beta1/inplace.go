@@ -41,22 +41,25 @@ func IsInPlaceUpdate(obj metav1.Object) bool {
 type inPlaceConfigInputs struct {
 	Spec              TalosConfigSpec `json:"spec"`
 	KubernetesVersion string          `json:"kubernetesVersion"`
+	InstallerImage    string          `json:"installerImage"`
 }
 
 // InPlaceConfigHash returns a stable hash of the inputs that determine the rendered Talos
 // machine configuration for a Machine.
 //
-// It deliberately covers both the TalosConfig spec and the owning Machine's Kubernetes
-// version: a version bump changes the rendered configuration (the version feeds the
-// generated control plane component and kubelet images) while leaving the TalosConfig spec
-// untouched, so hashing the spec alone would let a stale secret masquerade as fresh.
+// It deliberately covers more than the TalosConfig spec. A Kubernetes version bump changes
+// the rendered configuration (the version feeds the generated control plane component and
+// kubelet images) while leaving the spec untouched, and the installer image resolved by the
+// infrastructure provider is injected into the configuration without appearing in the spec
+// at all. Hashing the spec alone would let a stale secret masquerade as fresh in either case.
 //
 // The cluster PKI is intentionally excluded. It is stable for the life of the cluster and
 // is not something an in-place update can change.
-func InPlaceConfigHash(spec TalosConfigSpec, kubernetesVersion string) (string, error) {
+func InPlaceConfigHash(spec TalosConfigSpec, kubernetesVersion, installerImage string) (string, error) {
 	encoded, err := json.Marshal(inPlaceConfigInputs{
 		Spec:              spec,
 		KubernetesVersion: kubernetesVersion,
+		InstallerImage:    installerImage,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to encode in-place config inputs: %w", err)

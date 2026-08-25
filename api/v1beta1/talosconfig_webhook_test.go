@@ -112,21 +112,29 @@ func TestInPlaceConfigHash(t *testing.T) {
 
 	spec := bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"}
 
-	base, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.34.0")
+	base, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.34.0", "")
 	require.NoError(t, err)
 
-	same, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.34.0")
+	same, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.34.0", "")
 	require.NoError(t, err)
 	assert.Equal(t, base, same, "hash must be stable for identical inputs")
 
-	otherVersion, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.35.0")
+	otherVersion, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.35.0", "")
 	require.NoError(t, err)
 	assert.NotEqual(t, base, otherVersion, "a Kubernetes version bump must change the hash")
 
 	otherSpec, err := bootstrapv1beta1.InPlaceConfigHash(
 		bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.12"},
 		"1.34.0",
+		"",
 	)
 	require.NoError(t, err)
 	assert.NotEqual(t, base, otherSpec, "a spec change must change the hash")
+
+	// The installer image is injected into the rendered config by the infrastructure provider
+	// without appearing in the spec, so it has to move the hash too.
+	otherImage, err := bootstrapv1beta1.InPlaceConfigHash(spec, "1.34.0",
+		"factory.talos.dev/metal-installer/abc:v1.14.0")
+	require.NoError(t, err)
+	assert.NotEqual(t, base, otherImage, "an installer image change must change the hash")
 }
