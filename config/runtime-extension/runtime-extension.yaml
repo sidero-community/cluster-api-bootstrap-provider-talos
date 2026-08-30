@@ -1,11 +1,11 @@
 # Manifests for the in-place update Runtime Extension served by CABPT.
 #
-# These are NOT part of the default kustomization: in-place updates are an alpha Cluster API
-# feature and must be opted into deliberately. See docs/in-place-updates.md.
+# These ship in the default kustomization because --enable-runtime-extension defaults to on,
+# and the manager exits if its serving certificate is missing.
 #
-# Applying them requires:
-#   * the InPlaceUpdates feature gate on the core Cluster API controllers and on CACPPT
-#   * --enable-runtime-extension on the CABPT manager
+# Serving the hooks is inert on its own. Cluster API only calls them once the RuntimeSDK and
+# InPlaceUpdates feature gates are enabled on the core controllers; until then the
+# ExtensionConfig below is simply never discovered. See docs/in-place-updates.md.
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -13,18 +13,20 @@ metadata:
   name: runtime-extension-cert
   namespace: system
 spec:
+  # $(RUNTIME_EXTENSION_SERVICE_NAME) and $(SERVICE_NAMESPACE) are substituted by kustomize,
+  # and resolve to the name-prefixed Service below.
   dnsNames:
-    - cabpt-runtime-extension.$(SERVICE_NAMESPACE).svc
-    - cabpt-runtime-extension.$(SERVICE_NAMESPACE).svc.cluster.local
+    - $(RUNTIME_EXTENSION_SERVICE_NAME).$(SERVICE_NAMESPACE).svc
+    - $(RUNTIME_EXTENSION_SERVICE_NAME).$(SERVICE_NAMESPACE).svc.cluster.local
   issuerRef:
     kind: Issuer
     name: selfsigned-issuer
-  secretName: cabpt-runtime-extension-cert
+  secretName: $(RUNTIME_EXTENSION_SERVICE_NAME)-cert
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: cabpt-runtime-extension
+  name: runtime-extension-service
   namespace: system
 spec:
   selector:
@@ -42,12 +44,14 @@ metadata:
   name: talos-in-place-updates
   annotations:
     # cert-manager injects the CA so the Cluster API controllers trust this server.
-    cert-manager.io/inject-ca-from: $(SERVICE_NAMESPACE)/runtime-extension-cert
+    cert-manager.io/inject-ca-from: $(SERVICE_NAMESPACE)/$(RUNTIME_EXTENSION_CERT_NAME)
 spec:
   clientConfig:
     service:
-      name: cabpt-runtime-extension
-      namespace: system
+      name: $(RUNTIME_EXTENSION_SERVICE_NAME)
+      # ExtensionConfig is cluster scoped, so kustomize's namespace transformer does not reach
+      # this field: it has to be substituted explicitly.
+      namespace: $(SERVICE_NAMESPACE)
       port: 443
   # Empty selector: serve every namespace. Narrow this if the extension should only apply to
   # some clusters.

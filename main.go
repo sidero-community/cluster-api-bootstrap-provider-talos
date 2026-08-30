@@ -68,9 +68,11 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
 
-	fs.BoolVar(&enableRuntimeExtension, "enable-runtime-extension", false,
+	fs.BoolVar(&enableRuntimeExtension, "enable-runtime-extension", true,
 		"Serve the Cluster API in-place update hooks (CanUpdateMachine, CanUpdateMachineSet, UpdateMachine). "+
-			"Requires the InPlaceUpdates feature gate on the core Cluster API controllers and an ExtensionConfig pointing at this server.")
+			"The server needs a serving certificate at --runtime-extension-cert-dir, which the shipped manifests mount, "+
+			"and the manager exits if it is absent. Set to false when running without those manifests. "+
+			"Cluster API only calls the hooks once the InPlaceUpdates feature gate is on and an ExtensionConfig points at this server.")
 
 	fs.IntVar(&runtimeExtensionPort, "runtime-extension-port", 9445,
 		"Port the runtime extension server binds to, only used when --enable-runtime-extension is set.")

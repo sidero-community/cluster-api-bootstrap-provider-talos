@@ -52,36 +52,50 @@ which the update is left failed for an operator to inspect.
 
 ## Enabling it
 
-Three things must line up.
+**CABPT's side is on by default.** `--enable-runtime-extension` defaults to true, and the
+Service, certificate and `ExtensionConfig` ship in the default kustomization, so installing the
+provider is enough. Serving the hooks is inert until Cluster API is told to call them, which is
+the remaining work below.
 
-**1. Feature gate on the core Cluster API controllers**
+**1. Feature gates on the core Cluster API controllers**
+
+Both are required. `InPlaceUpdates` enables the feature; `RuntimeSDK` enables the runtime
+extension machinery it is delivered through. With `RuntimeSDK=false` the `ExtensionConfig` is
+never discovered and Machines simply sit at `UpToDate: false` with nothing acting on them.
 
 ```sh
-clusterctl init --bootstrap talos --control-plane talos ...
 kubectl -n capi-system set env deployment/capi-controller-manager \
-  EXP_INPLACE_UPDATES=true
+  EXP_INPLACE_UPDATES=true EXP_RUNTIME_SDK=true
 ```
 
-Or set `--feature-gates=InPlaceUpdates=true` on the manager.
+Or set `--feature-gates=InPlaceUpdates=true,RuntimeSDK=true` on the manager.
 
 **2. Feature gate on CACPPT**, so control plane Machines participate:
 
 ```sh
-kubectl -n cacppt-system patch deployment cacppt-controller-manager --type=json \
+kubectl -n talos-control-plane-system patch deployment cacppt-controller-manager --type=json \
   -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--feature-gates=InPlaceUpdates=true"}]'
 ```
 
-Without this, worker MachineDeployments still update in place — that path is handled entirely
-by core Cluster API — but control plane machines keep rolling.
+Adjust the namespace if you did not install with the shipped manifests. Without this, worker
+MachineDeployments still update in place — that path is handled entirely by core Cluster API —
+but control plane machines keep rolling.
 
-**3. The extension on CABPT**
+### Turning it off
 
-Add `--enable-runtime-extension` to the manager and apply
-`config/runtime-extension/runtime-extension.yaml`, which creates the Service, the
-certificate, and the `ExtensionConfig` that points Cluster API at the server.
+Cluster API allows only **one** extension per hook, so this cannot coexist with another
+`CanUpdateMachine` / `UpdateMachine` provider. To yield the hook, delete the `ExtensionConfig`
+and pass `--enable-runtime-extension=false`:
 
-Cluster API currently allows only **one** extension per hook, so this cannot coexist with
-another `CanUpdateMachine` / `UpdateMachine` provider.
+```sh
+kubectl delete extensionconfig cabpt-talos-in-place-updates
+kubectl -n talos-bootstrap-system patch deployment cabpt-controller-manager --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-runtime-extension=false"}]'
+```
+
+The flag must be turned off with the manifests, not on its own: the server needs the mounted
+serving certificate and **the manager exits at startup if it is missing**. Equally, dropping the
+`config/runtime-extension` manifests while leaving the flag on will crash-loop the manager.
 
 ## How it works
 

@@ -15,9 +15,11 @@ bases:
   - ../webhook
   - ../rbac
   - ../manager
+  - ../runtime-extension
 
 patchesStrategicMerge:
   - manager_webhook_patch.yaml
+  - manager_runtime_extension_patch.yaml
   - webhookcainjection_patch.yaml
 
 vars:
@@ -47,6 +49,17 @@ vars:
       kind: Service
       version: v1
       name: webhook-service
+  - name: RUNTIME_EXTENSION_SERVICE_NAME # name of the runtime extension service
+    objref:
+      kind: Service
+      version: v1
+      name: runtime-extension-service
+  - name: RUNTIME_EXTENSION_CERT_NAME # name of the runtime extension certificate
+    objref:
+      kind: Certificate
+      group: cert-manager.io
+      version: v1
+      name: runtime-extension-cert
 
 configurations:
   - kustomizeconfig.yaml

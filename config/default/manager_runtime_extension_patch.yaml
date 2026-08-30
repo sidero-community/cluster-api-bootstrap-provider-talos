@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          ports:
+            - containerPort: 9445
+              name: runtime-ext
+              protocol: TCP
+          volumeMounts:
+            # --enable-runtime-extension defaults to on and the manager exits without this
+            # certificate, so it is mounted by default rather than as an opt-in overlay.
+            - mountPath: /tmp/k8s-runtime-extension-server/serving-certs
+              name: runtime-extension-cert
+              readOnly: true
+      volumes:
+        - name: runtime-extension-cert
+          secret:
+            defaultMode: 420
+            secretName: $(RUNTIME_EXTENSION_SERVICE_NAME)-cert

@@ -2,3 +2,11 @@
 varReference:
   - kind: Deployment
     path: spec/template/spec/volumes/secret/secretName
+  # ExtensionConfig is not a type kustomize knows, so the reference to the runtime extension
+  # Service has to be declared for $(RUNTIME_EXTENSION_SERVICE_NAME) to be substituted.
+  - kind: ExtensionConfig
+    path: spec/clientConfig/service/name
+  - kind: ExtensionConfig
+    path: spec/clientConfig/service/namespace
+  - kind: ExtensionConfig
+    path: metadata/annotations
