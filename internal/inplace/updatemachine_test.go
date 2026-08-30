@@ -235,3 +235,29 @@ func TestNeedsUpgrade(t *testing.T) {
 	assert.False(t, needsUpgrade("", "v1.13.0"))
 	assert.False(t, needsUpgrade("ghcr.io/siderolabs/installer:v1.13.0", ""))
 }
+
+// A floating tag has no version to compare against the running one, so treating it as an upgrade
+// would reboot the node, come back on the same tag, and reboot again forever.
+func TestNeedsUpgradeIgnoresUnversionedTags(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		image, running string
+		want           bool
+	}{
+		"newer version":      {"ghcr.io/siderolabs/installer:v1.14.0", "v1.13.9", true},
+		"same version":       {"ghcr.io/siderolabs/installer:v1.13.9", "v1.13.9", false},
+		"latest":             {"ghcr.io/siderolabs/installer:latest", "v1.13.9", false},
+		"edge":               {"ghcr.io/siderolabs/installer:edge", "v1.13.9", false},
+		"no tag":             {"ghcr.io/siderolabs/installer", "v1.13.9", false},
+		"digest only":        {"ghcr.io/siderolabs/installer@sha256:abc", "v1.13.9", false},
+		"registry port only": {"registry.local:5000/installer", "v1.13.9", false},
+		"prerelease":         {"ghcr.io/siderolabs/installer:v1.14.0-alpha.1", "v1.13.9", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, needsUpgrade(tc.image, tc.running))
+		})
+	}
+}

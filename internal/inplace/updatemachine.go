@@ -7,6 +7,7 @@ package inplace
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
@@ -238,12 +239,19 @@ func needsUpgrade(desiredImage, runningVersion string) bool {
 	}
 
 	tag := imageTag(desiredImage)
-	if tag == "" {
+	if !talosVersionTag.MatchString(tag) {
+		// A floating tag such as "latest" carries no version to compare against, so every
+		// reconcile after a successful upgrade would see a mismatch and reboot the node again.
+		// Treating it as "no upgrade needed" is the safe direction.
 		return false
 	}
 
 	return tag != runningVersion
 }
+
+// talosVersionTag matches an installer tag that names a Talos version, e.g. "v1.13.9". Tags that
+// do not, "latest" most of all, cannot be compared against the running version.
+var talosVersionTag = regexp.MustCompile(`^v\d+\.\d+\.\d+`)
 
 // imageTag extracts the tag from an image reference, ignoring any digest and being careful
 // not to mistake a registry port for a tag.
