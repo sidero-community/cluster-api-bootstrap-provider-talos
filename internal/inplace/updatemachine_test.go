@@ -96,6 +96,7 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, clusterv1.AddToScheme(scheme))
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -108,8 +109,18 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 
 	node := &fakeNode{version: runningVersion}
 
+	// The addresses live only on the object in the API server. Cluster API strips status when it
+	// builds an UpdateMachine request, so a handler that trusts the request object never sees
+	// them and waits forever.
+	liveMachine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "machine-1"},
+		Status: clusterv1.MachineStatus{
+			Addresses: []clusterv1.MachineAddress{{Type: clusterv1.MachineInternalIP, Address: "192.168.1.10"}},
+		},
+	}
+
 	handler := NewHandler(
-		fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build(),
+		fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, liveMachine).Build(),
 		func(context.Context, types.NamespacedName, []string) (NodeClient, error) { return node, nil },
 	)
 
@@ -120,9 +131,7 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 			Version:     "v1.34.0",
 			Bootstrap:   clusterv1.Bootstrap{DataSecretName: ptr.To("machine-1-bootstrap-data")},
 		},
-		Status: clusterv1.MachineStatus{
-			Addresses: []clusterv1.MachineAddress{{Type: clusterv1.MachineInternalIP, Address: "192.168.1.10"}},
-		},
+		// Deliberately no status: cleanupMachine drops it before the request is sent.
 	}
 
 	return &updateFixture{

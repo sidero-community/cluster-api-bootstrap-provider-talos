@@ -62,7 +62,13 @@ func (h *Handler) DoUpdateMachine(ctx context.Context, req *runtimehooksv1.Updat
 		return
 	}
 
-	endpoints := machineAddresses(&machine)
+	endpoints, err := h.machineEndpoints(ctx, &machine)
+	if err != nil {
+		respondRetryFailure(&resp.CommonRetryResponse, "failed to read machine addresses", err, log)
+
+		return
+	}
+
 	if len(endpoints) == 0 {
 		log.Info("machine has no addresses yet, waiting")
 
@@ -257,6 +263,22 @@ func imageTag(image string) string {
 	}
 
 	return image[colon+1:]
+}
+
+// machineEndpoints returns the addresses usable as Talos API endpoints for a machine.
+//
+// The Machine is re-read from the API server rather than taken from the hook request. Cluster
+// API strips status when building an UpdateMachine request, treating it purely as desired state,
+// so the addresses on the request object are always empty and waiting on them never completes.
+func (h *Handler) machineEndpoints(ctx context.Context, machine *clusterv1.Machine) ([]string, error) {
+	live := &clusterv1.Machine{}
+
+	key := types.NamespacedName{Namespace: machine.Namespace, Name: machine.Name}
+	if err := h.client.Get(ctx, key, live); err != nil {
+		return nil, fmt.Errorf("reading machine %s: %w", key, err)
+	}
+
+	return machineAddresses(live), nil
 }
 
 // machineAddresses returns the addresses usable as Talos API endpoints for a machine.
