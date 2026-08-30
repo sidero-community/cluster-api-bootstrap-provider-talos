@@ -52,10 +52,19 @@ which the update is left failed for an operator to inspect.
 
 ## Enabling it
 
-**CABPT's side is on by default.** `--enable-runtime-extension` defaults to true, and the
-Service, certificate and `ExtensionConfig` ship in the default kustomization, so installing the
-provider is enough. Serving the hooks is inert until Cluster API is told to call them, which is
-the remaining work below.
+**CABPT's side is on by default.** `--enable-runtime-extension` defaults to true, and the Service
+and certificate ship in the default kustomization, so installing the provider is enough. Serving
+the hooks is inert until Cluster API is told to call them, which is the remaining work below.
+
+The `ExtensionConfig` that registers the server is written by the manager, not shipped as a
+manifest. It is cluster scoped, so neither clusterctl nor the Cluster API operator rewrites the
+install namespace inside `spec.clientConfig.service` the way they do for webhook configurations,
+and cert-manager's ca-injector only patches webhook configurations, APIServices and CRDs — so
+`cert-manager.io/inject-ca-from` on an `ExtensionConfig` is silently a no-op. A static manifest
+would therefore name the wrong namespace with an empty `caBundle`. Cluster API's registry warmup
+treats a non-discoverable extension as **fatal**, so that combination crash-loops the core
+manager. The manager takes its namespace from the downward API and the CA from its mounted
+serving certificate, and reconciles the object every 10 minutes so a rotated CA is picked up.
 
 **1. Feature gates on the core Cluster API controllers**
 

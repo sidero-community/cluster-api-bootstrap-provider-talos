@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +49,15 @@ var (
 	enableRuntimeExtension  bool
 	runtimeExtensionPort    int
 	runtimeExtensionCertDir string
+)
+
+const (
+	// runtimeExtensionConfigName is the ExtensionConfig the manager maintains for itself.
+	runtimeExtensionConfigName = "cabpt-talos-in-place-updates"
+
+	// runtimeExtensionServiceName is the Service fronting the runtime extension server, as
+	// named by config/runtime-extension.
+	runtimeExtensionServiceName = "cabpt-runtime-extension-service"
 )
 
 func InitFlags(fs *pflag.FlagSet) {
@@ -186,6 +196,24 @@ func setupReconcilers(ctx context.Context, mgr manager.Manager) {
 			CertDir: runtimeExtensionCertDir,
 		}); err != nil {
 			setupLog.Error(err, "unable to start the in-place update runtime extension")
+			os.Exit(1)
+		}
+
+		// The ExtensionConfig cannot be shipped as a manifest: it is cluster scoped, so the
+		// install namespace is not rewritten inside spec.clientConfig.service, and cert-manager
+		// cannot inject a CA into it. Both are known here, so the manager writes it itself.
+		namespace := os.Getenv("POD_NAMESPACE")
+		if namespace == "" {
+			setupLog.Info("POD_NAMESPACE is unset, skipping ExtensionConfig registration; " +
+				"Cluster API will not reach the in-place update hooks until an ExtensionConfig points at this server")
+		} else if err := mgr.Add(inplace.NewRegistrar(mgr.GetClient(), inplace.RegistrarOptions{
+			Name:             runtimeExtensionConfigName,
+			ServiceName:      runtimeExtensionServiceName,
+			ServiceNamespace: namespace,
+			ServicePort:      443,
+			CACertPath:       filepath.Join(runtimeExtensionCertDir, "ca.crt"),
+		})); err != nil {
+			setupLog.Error(err, "unable to register the in-place update ExtensionConfig")
 			os.Exit(1)
 		}
 	}

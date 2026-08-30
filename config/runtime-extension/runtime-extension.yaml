@@ -3,9 +3,15 @@
 # These ship in the default kustomization because --enable-runtime-extension defaults to on,
 # and the manager exits if its serving certificate is missing.
 #
+# The ExtensionConfig that registers this server is deliberately NOT here. It is cluster scoped,
+# so neither clusterctl nor the Cluster API operator rewrites the install namespace inside
+# spec.clientConfig.service, and cert-manager cannot inject a CA into it. A manifest would
+# therefore point at the wrong namespace with an empty caBundle, which crash-loops the core
+# Cluster API manager because registry warmup treats a non-discoverable extension as fatal.
+# The manager writes it instead, from its own namespace and mounted CA.
+#
 # Serving the hooks is inert on its own. Cluster API only calls them once the RuntimeSDK and
-# InPlaceUpdates feature gates are enabled on the core controllers; until then the
-# ExtensionConfig below is simply never discovered. See docs/in-place-updates.md.
+# InPlaceUpdates feature gates are enabled on the core controllers. See docs/in-place-updates.md.
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -37,22 +43,3 @@ spec:
       targetPort: runtime-ext
       protocol: TCP
       name: https
----
-apiVersion: runtime.cluster.x-k8s.io/v1beta2
-kind: ExtensionConfig
-metadata:
-  name: talos-in-place-updates
-  annotations:
-    # cert-manager injects the CA so the Cluster API controllers trust this server.
-    cert-manager.io/inject-ca-from: $(SERVICE_NAMESPACE)/$(RUNTIME_EXTENSION_CERT_NAME)
-spec:
-  clientConfig:
-    service:
-      name: $(RUNTIME_EXTENSION_SERVICE_NAME)
-      # ExtensionConfig is cluster scoped, so kustomize's namespace transformer does not reach
-      # this field: it has to be substituted explicitly.
-      namespace: $(SERVICE_NAMESPACE)
-      port: 443
-  # Empty selector: serve every namespace. Narrow this if the extension should only apply to
-  # some clusters.
-  namespaceSelector: {}

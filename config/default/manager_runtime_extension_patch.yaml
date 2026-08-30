@@ -8,6 +8,13 @@ spec:
     spec:
       containers:
         - name: manager
+          env:
+            # The manager writes its own ExtensionConfig and needs to know which namespace it
+            # was installed into; see internal/inplace/register.go.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - containerPort: 9445
               name: runtime-ext

@@ -49,3 +49,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - runtime.cluster.x-k8s.io
+  resources:
+  - extensionconfigs
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
