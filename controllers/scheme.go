@@ -8,6 +8,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	capiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimev1 "sigs.k8s.io/cluster-api/api/runtime/v1beta2"
 
 	bootstrapv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
@@ -19,6 +20,9 @@ func init() {
 	utilruntime.Must(capiv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(bootstrapv1alpha3.AddToScheme(scheme.Scheme))
 	utilruntime.Must(bootstrapv1beta1.AddToScheme(scheme.Scheme))
+	// ExtensionConfig is written by the in-place update registrar, which reaches it through the
+	// manager's client and so needs the type in this shared scheme.
+	utilruntime.Must(runtimev1.AddToScheme(scheme.Scheme))
 
 	// +kubebuilder:scaffold:scheme
 }
