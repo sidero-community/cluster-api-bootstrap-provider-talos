@@ -23,7 +23,7 @@ There are a few corequisites and assumptions that go into using this project:
 
 ## Installing
 
-CABPT provider should be installed alongside with [CACPPT](https://github.com/siderolabs/cluster-api-control-plane-provider-talos) provider.
+CABPT provider should be installed alongside with [CACPPT](https://github.com/sidero-community/cluster-api-control-plane-provider-talos) provider.
 
 ```shell
 clusterctl init --bootstrap talos --control-plane talos --infrastructure <infrastructure provider>
@@ -42,10 +42,10 @@ This can be worked around by adding the following to `~/.cluster-api/clusterctl.
 ```yaml
 providers:
   - name: "talos"
-    url: "https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml"
+    url: "https://github.com/sidero-community/cluster-api-bootstrap-provider-talos/releases/latest/bootstrap-components.yaml"
     type: "BootstrapProvider"
   - name: "talos"
-    url: "https://github.com/siderolabs/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml"
+    url: "https://github.com/sidero-community/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml"
     type: "ControlPlaneProvider"
   - name: "sidero"
     url: "https://github.com/siderolabs/sidero/releases/latest/infrastructure-components.yaml"
