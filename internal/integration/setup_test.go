@@ -96,6 +96,9 @@ func setupSuite(t *testing.T) (context.Context, client.Client) {
 		Client: mgr.GetClient(),
 		Log:    ctrl.Log.WithName(t.Name()),
 		Scheme: mgr.GetScheme(),
+		// Off deliberately: there are no Talos nodes behind these MachinePools for the update loop
+		// to reach. The loop itself is covered by the controller tests against a fake node client.
+		MachinePoolInPlaceUpdates: false,
 	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 10})
 	require.NoError(t, err)
 

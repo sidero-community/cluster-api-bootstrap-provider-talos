@@ -49,6 +49,8 @@ var (
 	enableRuntimeExtension  bool
 	runtimeExtensionPort    int
 	runtimeExtensionCertDir string
+
+	enableMachinePoolInPlaceUpdates bool
 )
 
 const (
@@ -89,6 +91,12 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	fs.StringVar(&runtimeExtensionCertDir, "runtime-extension-cert-dir", "/tmp/k8s-runtime-extension-server/serving-certs/",
 		"Directory holding tls.crt and tls.key for the runtime extension server, only used when --enable-runtime-extension is set.")
+
+	fs.BoolVar(&enableMachinePoolInPlaceUpdates, "enable-machine-pool-in-place-updates", true,
+		"Re-render the bootstrap data of a MachinePool-owned TalosConfig when its spec changes, and apply the "+
+			"result to the pool's running members over the Talos API, one node at a time. Cluster API has no "+
+			"in-place update flow for MachinePools, so this is implemented by CABPT rather than through the "+
+			"runtime extension hooks. Set to false to keep a pool's rendered configuration frozen once written.")
 
 	flags.AddManagerOptions(fs, &managerOptions)
 
@@ -177,10 +185,12 @@ func main() {
 
 func setupReconcilers(ctx context.Context, mgr manager.Manager) {
 	if err := (&controllers.TalosConfigReconciler{
-		Client:           mgr.GetClient(),
-		Log:              ctrl.Log.WithName("controllers").WithName("TalosConfig"),
-		Scheme:           mgr.GetScheme(),
-		WatchFilterValue: watchFilterValue,
+		Client:                    mgr.GetClient(),
+		Log:                       ctrl.Log.WithName("controllers").WithName("TalosConfig"),
+		Scheme:                    mgr.GetScheme(),
+		WatchFilterValue:          watchFilterValue,
+		MachinePoolInPlaceUpdates: enableMachinePoolInPlaceUpdates,
+		NodeClientFactory:         inplace.NewNodeClient(mgr.GetClient()),
 	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosConfig")
 		os.Exit(1)

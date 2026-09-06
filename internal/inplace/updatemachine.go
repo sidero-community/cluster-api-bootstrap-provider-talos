@@ -286,11 +286,15 @@ func (h *Handler) machineEndpoints(ctx context.Context, machine *clusterv1.Machi
 		return nil, fmt.Errorf("reading machine %s: %w", key, err)
 	}
 
-	return machineAddresses(live), nil
+	return MachineAddresses(live), nil
 }
 
-// machineAddresses returns the addresses usable as Talos API endpoints for a machine.
-func machineAddresses(machine *clusterv1.Machine) []string {
+// MachineAddresses returns the addresses usable as Talos API endpoints for a machine.
+//
+// It is exported because the MachinePool in-place path in the TalosConfig controller resolves
+// endpoints for pool members exactly the same way; Cluster API has no in-place update flow for
+// MachinePools, so that path cannot go through the hook handler.
+func MachineAddresses(machine *clusterv1.Machine) []string {
 	out := make([]string, 0, len(machine.Status.Addresses))
 
 	for _, addr := range machine.Status.Addresses {

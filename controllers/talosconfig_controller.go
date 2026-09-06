@@ -53,6 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
+	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/inplace"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -70,6 +71,17 @@ type TalosConfigReconciler struct {
 	Log              logr.Logger
 	Scheme           *runtime.Scheme
 	WatchFilterValue string
+
+	// MachinePoolInPlaceUpdates enables re-rendering the bootstrap data of a MachinePool-owned
+	// TalosConfig when its spec changes, and applying the result to the pool's running members
+	// over the Talos API. With it off a MachinePool behaves as it always has: the rendered
+	// configuration is frozen once written.
+	MachinePoolInPlaceUpdates bool
+
+	// NodeClientFactory opens a Talos API client for a MachinePool member. When nil, a client
+	// built from the cluster's talosconfig secret is used; tests substitute a fake so the update
+	// loop can be exercised without hardware.
+	NodeClientFactory inplace.NodeClientFactory
 }
 
 type TalosConfigScope struct {
@@ -123,7 +135,8 @@ func (r *TalosConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=talosconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=talosconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status;machines;machines/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status;machines/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools;machinepools/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=runtime.cluster.x-k8s.io,resources=extensionconfigs,verbs=get;list;watch;create;update;patch
@@ -242,7 +255,18 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// apply. The annotation is removed by the core Machine controller once the update
 	// completes, so this falls back to the fast path on its own.
 	if ptr.Deref(config.Status.Initialization.DataSecretCreated, false) && !bootstrapv1beta1.IsInPlaceUpdate(config) {
-		log.Info("ignoring an already ready config")
+		// A MachinePool's rendered configuration is not frozen the way a Machine's is. The pool
+		// keeps one bootstrap data secret for every instance it will ever create, and Cluster API
+		// has no in-place update flow to regenerate it, so a ready pool config carries on past
+		// this fast path and reconciles the pool itself. That happens after the client config
+		// reconcile below, so a ready pool config still gets exactly the status a ready Machine
+		// config gets.
+		poolUpdate := r.MachinePoolInPlaceUpdates && owner.IsMachinePool()
+
+		if !poolUpdate {
+			log.Info("ignoring an already ready config")
+		}
+
 		v1beta1conditions.MarkTrue(config, bootstrapv1beta1.DataSecretAvailableV1Beta1Condition)
 		conditions.Set(config, metav1.Condition{
 			Type:   bootstrapv1beta1.DataSecretAvailableCondition,
@@ -277,7 +301,11 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			})
 		}
 
-		return ctrl.Result{}, err
+		if err != nil || !poolUpdate {
+			return ctrl.Result{}, err
+		}
+
+		return r.reconcileMachinePool(ctx, log, tcScope)
 	}
 
 	// Wait patiently for the infrastructure to be ready
@@ -318,20 +346,7 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if err = r.reconcileGenerate(ctx, tcScope); err != nil {
-		v1beta1conditions.MarkFalse(
-			config,
-			bootstrapv1beta1.DataSecretAvailableV1Beta1Condition,
-			bootstrapv1beta1.DataSecretGenerationFailedV1Beta1Reason,
-			capiv1.ConditionSeverityError,
-			"%s",
-			err.Error(),
-		)
-		conditions.Set(config, metav1.Condition{
-			Type:    bootstrapv1beta1.DataSecretAvailableCondition,
-			Status:  metav1.ConditionFalse,
-			Reason:  bootstrapv1beta1.DataSecretNotAvailableInternalErrorReason,
-			Message: fmt.Sprintf("Data secret generation failed: %s", err),
-		})
+		markDataSecretGenerationFailed(config, err)
 
 		return ctrl.Result{}, err
 	}
@@ -346,6 +361,25 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	})
 
 	return ctrl.Result{}, nil
+}
+
+// markDataSecretGenerationFailed records a failure to render the machine configuration on both
+// the current and the deprecated v1beta1 condition.
+func markDataSecretGenerationFailed(config *bootstrapv1beta1.TalosConfig, err error) {
+	v1beta1conditions.MarkFalse(
+		config,
+		bootstrapv1beta1.DataSecretAvailableV1Beta1Condition,
+		bootstrapv1beta1.DataSecretGenerationFailedV1Beta1Reason,
+		capiv1.ConditionSeverityError,
+		"%s",
+		err.Error(),
+	)
+	conditions.Set(config, metav1.Condition{
+		Type:    bootstrapv1beta1.DataSecretAvailableCondition,
+		Status:  metav1.ConditionFalse,
+		Reason:  bootstrapv1beta1.DataSecretNotAvailableInternalErrorReason,
+		Message: fmt.Sprintf("Data secret generation failed: %s", err),
+	})
 }
 
 func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *TalosConfigScope) error {
@@ -468,12 +502,7 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		}
 	}
 
-	k8sVersion, err := kubernetesVersion(tcScope)
-	if err != nil {
-		return err
-	}
-
-	configHash, err := bootstrapv1beta1.InPlaceConfigHash(config.Spec, k8sVersion, installerImage)
+	configHash, err := renderedConfigHash(tcScope, installerImage)
 	if err != nil {
 		return err
 	}
@@ -583,6 +612,21 @@ func kubernetesVersion(scope *TalosConfigScope) (string, error) {
 	}
 
 	return constants.DefaultKubernetesVersion, nil
+}
+
+// renderedConfigHash returns the hash stamped on the bootstrap data secret for the
+// configuration rendered from this scope and installer image.
+//
+// It exists so the gate that decides whether a MachinePool's secret needs re-rendering derives
+// its expected hash from exactly the inputs the renderer uses. A gate that computed a different
+// hash would either re-render on every reconcile or never re-render at all.
+func renderedConfigHash(scope *TalosConfigScope, installerImage string) (string, error) {
+	k8sVersion, err := kubernetesVersion(scope)
+	if err != nil {
+		return "", err
+	}
+
+	return bootstrapv1beta1.InPlaceConfigHash(scope.Config.Spec, k8sVersion, installerImage)
 }
 
 // genConfigs will generate a bootstrap config and a talosconfig to return

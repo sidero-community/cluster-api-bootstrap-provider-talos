@@ -22,6 +22,15 @@ import (
 // no-op, and report the in-place update complete without having changed anything.
 const InPlaceConfigHashAnnotation = "bootstrap.cluster.x-k8s.io/in-place-config-hash"
 
+// AppliedConfigHashAnnotation is set by CABPT on a MachinePool Machine and records the config
+// hash of the machine configuration that was last applied to that node over the Talos API.
+//
+// Cluster API has no in-place update flow for MachinePools, so nothing else tracks which pool
+// members are running the current configuration. Comparing this against the hash on the pool's
+// bootstrap data secret is what lets a requeue skip the nodes that have already converged
+// instead of re-applying to the whole pool on every reconcile.
+const AppliedConfigHashAnnotation = "bootstrap.cluster.x-k8s.io/applied-config-hash"
+
 // IsInPlaceUpdate reports whether an object is being written as part of a Cluster API
 // in-place update, i.e. whether it carries clusterv1.UpdateInProgressAnnotation.
 //

@@ -165,17 +165,33 @@ func (r *TalosConfigReconciler) writeK8sCASecret(ctx context.Context, scope *Tal
 	return nil
 }
 
+// rewritesBootstrapData reports whether an existing bootstrap data secret may be replaced with
+// freshly rendered configuration.
+//
+// Two cases qualify. A Cluster API in-place update, where the owning controller has written a
+// new desired spec and the node needs the regenerated configuration. And a MachinePool, whose
+// single secret is re-read by the infrastructure provider every time it creates an instance, so
+// freezing it would strand the pool on the configuration it was created with — Cluster API
+// offers no in-place update flow for pools, so nothing else would ever rewrite it.
+func (r *TalosConfigReconciler) rewritesBootstrapData(scope *TalosConfigScope) bool {
+	if bootstrapv1beta1.IsInPlaceUpdate(scope.Config) {
+		return true
+	}
+
+	return r.MachinePoolInPlaceUpdates && scope.ConfigOwner.IsMachinePool()
+}
+
 // writeBootstrapData creates a new secret with the data passed in as input
 // writeBootstrapData persists the rendered machine configuration for a Machine.
 //
 // Bootstrap data is immutable for the life of a Machine under normal circumstances, so an
-// existing secret is left untouched. The exception is an in-place update, where the owning
-// controller has written a new desired spec and the node needs the regenerated
-// configuration; there the secret is rewritten in place, keeping its name so the Machine's
-// bootstrap reference stays valid.
+// existing secret is left untouched. The exceptions are listed on rewritesBootstrapData; there
+// the secret is rewritten in place, keeping its name so the owner's bootstrap reference stays
+// valid.
 //
-// configHash is recorded on the secret so the in-place update extension can distinguish a
-// regenerated secret from one that still holds the pre-update configuration.
+// configHash is recorded on the secret so the in-place update extension, and the MachinePool
+// update loop, can distinguish a regenerated secret from one that still holds the pre-update
+// configuration.
 func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *TalosConfigScope, data []byte, configHash string) (string, error) {
 	ownerName := scope.ConfigOwner.GetName()
 	dataSecretName := ownerName + "-bootstrap-data"
@@ -184,7 +200,7 @@ func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *T
 
 	existing, err := r.fetchSecret(ctx, scope.Config, dataSecretName)
 	if err == nil {
-		if !bootstrapv1beta1.IsInPlaceUpdate(scope.Config) {
+		if !r.rewritesBootstrapData(scope) {
 			return dataSecretName, nil
 		}
 
@@ -194,7 +210,7 @@ func (r *TalosConfigReconciler) writeBootstrapData(ctx context.Context, scope *T
 			return dataSecretName, nil
 		}
 
-		r.Log.Info("regenerating bootstrap data for in-place update", "owner", ownerName)
+		r.Log.Info("regenerating bootstrap data", "owner", ownerName)
 
 		patched := existing.DeepCopy()
 		if patched.Annotations == nil {

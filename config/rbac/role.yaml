@@ -43,11 +43,19 @@ rules:
   - clusters/status
   - machinepools
   - machinepools/status
-  - machines
   - machines/status
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machines
+  verbs:
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - runtime.cluster.x-k8s.io
