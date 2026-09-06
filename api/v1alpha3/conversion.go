@@ -64,14 +64,39 @@ func (dst *TalosConfigList) ConvertFrom(srcRaw conversion.Hub) error {
 	return Convert_v1beta1_TalosConfigList_To_v1alpha3_TalosConfigList(src, dst, nil)
 }
 
+// ConvertTo converts this TalosConfigTemplate to the Hub version (v1beta1).
 func (src *TalosConfigTemplate) ConvertTo(dstRaw conversion.Hub) error {
 	dst := dstRaw.(*bsv1beta1.TalosConfigTemplate)
-	return Convert_v1alpha3_TalosConfigTemplate_To_v1beta1_TalosConfigTemplate(src, dst, nil)
+	if err := Convert_v1alpha3_TalosConfigTemplate_To_v1beta1_TalosConfigTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	// Preserve Hub data on down-conversion.
+	restored := &bsv1beta1.TalosConfigTemplate{}
+	ok, err := utilconversion.UnmarshalData(src, restored)
+	if err != nil || !ok {
+		return err
+	}
+
+	// spec.template.metadata has no v1alpha3 peer, so it only survives via the annotation.
+	dst.Spec.Template.ObjectMeta = restored.Spec.Template.ObjectMeta
+
+	return nil
 }
 
+// ConvertFrom converts from the Hub version (v1beta1) to this version (v1alpha3).
 func (dst *TalosConfigTemplate) ConvertFrom(srcRaw conversion.Hub) error {
 	src := srcRaw.(*bsv1beta1.TalosConfigTemplate)
-	return Convert_v1beta1_TalosConfigTemplate_To_v1alpha3_TalosConfigTemplate(src, dst, nil)
+	if err := Convert_v1beta1_TalosConfigTemplate_To_v1alpha3_TalosConfigTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	// Preserve Hub data on down-conversion.
+	if err := utilconversion.MarshalData(src, dst); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (src *TalosConfigTemplateList) ConvertTo(dstRaw conversion.Hub) error {
@@ -143,6 +168,15 @@ func Convert_v1beta1_TalosConfigStatus_To_v1alpha3_TalosConfigStatus(in *bsv1bet
 	out.V1Beta2.Conditions = in.Conditions
 
 	return nil
+}
+
+// Convert_v1beta1_TalosConfigTemplateResource_To_v1alpha3_TalosConfigTemplateResource converts a
+// hub template resource down to v1alpha3.
+//
+// v1alpha3 has no template metadata, so the field is dropped here and restored from the
+// conversion-data annotation by TalosConfigTemplate.ConvertTo.
+func Convert_v1beta1_TalosConfigTemplateResource_To_v1alpha3_TalosConfigTemplateResource(in *bsv1beta1.TalosConfigTemplateResource, out *TalosConfigTemplateResource, s apimachineryconversion.Scope) error {
+	return autoConvert_v1beta1_TalosConfigTemplateResource_To_v1alpha3_TalosConfigTemplateResource(in, out, s)
 }
 
 func Convert_v1beta1_Condition_To_v1_Condition(in *clusterv1beta1.Condition, out *metav1.Condition, s apimachineryconversion.Scope) error {

@@ -4,10 +4,19 @@
 
 package v1beta1
 
-import apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+import (
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+)
 
 // TalosConfigTemplateResource defines the Template structure
 type TalosConfigTemplateResource struct {
+	// ObjectMeta is the standard object's metadata applied to the TalosConfigs generated from
+	// this template. Only labels and annotations are carried over.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/metadata/
+	// +optional
+	ObjectMeta clusterv1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+
 	Spec TalosConfigSpec `json:"spec,omitempty"`
 }
 
