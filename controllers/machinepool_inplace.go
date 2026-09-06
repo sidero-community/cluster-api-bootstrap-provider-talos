@@ -14,6 +14,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	capiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -47,13 +48,17 @@ func (r *TalosConfigReconciler) reconcileMachinePool(ctx context.Context, log lo
 	secret, err := r.poolBootstrapData(ctx, log, scope)
 	if err != nil {
 		markDataSecretGenerationFailed(config, err)
+		markPoolUnreadable(config, "Cannot render the configuration the pool should be running", err)
 
 		return ctrl.Result{}, err
 	}
 
 	data := secret.Data["value"]
 	if len(data) == 0 {
-		return ctrl.Result{}, fmt.Errorf("bootstrap data secret %s/%s has no value", secret.Namespace, secret.Name)
+		err := fmt.Errorf("bootstrap data secret %s/%s has no value", secret.Namespace, secret.Name)
+		markPoolUnreadable(config, "Cannot read the configuration the pool should be running", err)
+
+		return ctrl.Result{}, err
 	}
 
 	// The hash on the secret, rather than the one just computed, is what a member is recorded as
@@ -61,57 +66,87 @@ func (r *TalosConfigReconciler) reconcileMachinePool(ctx context.Context, log lo
 	// equal to every un-annotated Machine and quietly skip the whole pool, so refuse it.
 	appliedHash := secret.Annotations[bootstrapv1beta1.InPlaceConfigHashAnnotation]
 	if appliedHash == "" {
-		return ctrl.Result{}, fmt.Errorf("bootstrap data secret %s/%s carries no configuration hash", secret.Namespace, secret.Name)
+		err := fmt.Errorf("bootstrap data secret %s/%s carries no configuration hash", secret.Namespace, secret.Name)
+		markPoolUnreadable(config, "Cannot tell which members are up to date", err)
+
+		return ctrl.Result{}, err
 	}
 
 	machines, err := r.machinePoolMachines(ctx, scope)
 	if err != nil {
+		markPoolUnreadable(config, "Cannot list the pool's machines", err)
+
 		return ctrl.Result{}, err
 	}
 
 	if len(machines) == 0 {
-		conditions.Set(config, metav1.Condition{
-			Type:   bootstrapv1beta1.MachinePoolInPlaceUpdateCondition,
-			Status: metav1.ConditionUnknown,
-			Reason: bootstrapv1beta1.MachinePoolInPlaceUpdateMachinesUnavailableReason,
-			Message: "Cluster API created no Machines for this MachinePool, so its members cannot be " +
-				"reached; the rendered configuration applies to instances created from now on",
-		})
+		setMachinePoolInPlaceCondition(config, metav1.ConditionUnknown,
+			bootstrapv1beta1.MachinePoolInPlaceUpdateMachinesUnavailableReason,
+			"Cluster API created no Machines for this MachinePool, so its members cannot be "+
+				"reached; the rendered configuration applies to instances created from now on")
 
 		return ctrl.Result{}, nil
 	}
 
 	converged, err := r.applyToPoolMachines(ctx, log, scope, machines, data, appliedHash)
 	if err != nil {
-		conditions.Set(config, metav1.Condition{
-			Type:    bootstrapv1beta1.MachinePoolInPlaceUpdateCondition,
-			Status:  metav1.ConditionFalse,
-			Reason:  bootstrapv1beta1.MachinePoolInPlaceUpdateFailedReason,
-			Message: fmt.Sprintf("%d of %d MachinePool machines updated: %s", converged, len(machines), err),
-		})
+		setMachinePoolInPlaceCondition(config, metav1.ConditionFalse,
+			bootstrapv1beta1.MachinePoolInPlaceUpdateFailedReason,
+			fmt.Sprintf("%d of %d MachinePool machines updated: %s", converged, len(machines), err))
 
 		return ctrl.Result{}, err
 	}
 
 	if converged < len(machines) {
-		conditions.Set(config, metav1.Condition{
-			Type:    bootstrapv1beta1.MachinePoolInPlaceUpdateCondition,
-			Status:  metav1.ConditionFalse,
-			Reason:  bootstrapv1beta1.MachinePoolInPlaceUpdateInProgressReason,
-			Message: fmt.Sprintf("%d of %d MachinePool machines updated", converged, len(machines)),
-		})
+		setMachinePoolInPlaceCondition(config, metav1.ConditionFalse,
+			bootstrapv1beta1.MachinePoolInPlaceUpdateInProgressReason,
+			fmt.Sprintf("%d of %d MachinePool machines updated", converged, len(machines)))
 
 		return ctrl.Result{RequeueAfter: poolConvergenceRequeue}, nil
 	}
 
-	conditions.Set(config, metav1.Condition{
-		Type:    bootstrapv1beta1.MachinePoolInPlaceUpdateCondition,
-		Status:  metav1.ConditionTrue,
-		Reason:  bootstrapv1beta1.MachinePoolInPlaceUpdateUpToDateReason,
-		Message: fmt.Sprintf("%d of %d MachinePool machines updated", converged, len(machines)),
-	})
+	setMachinePoolInPlaceCondition(config, metav1.ConditionTrue,
+		bootstrapv1beta1.MachinePoolInPlaceUpdateUpToDateReason,
+		fmt.Sprintf("%d of %d MachinePool machines updated", converged, len(machines)))
 
 	return ctrl.Result{}, nil
+}
+
+func setMachinePoolInPlaceCondition(config *bootstrapv1beta1.TalosConfig, status metav1.ConditionStatus, reason, message string) {
+	conditions.Set(config, metav1.Condition{
+		Type:    bootstrapv1beta1.MachinePoolInPlaceUpdateCondition,
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	})
+}
+
+// markPoolUnreadable records that the pool could not be assessed at all.
+//
+// Every one of these paths returns before a single member is looked at, so the previous value of
+// the condition says nothing about the present. A persistent failure that left an earlier True
+// standing would report a pool as up to date on the strength of a reading that was never taken.
+func markPoolUnreadable(config *bootstrapv1beta1.TalosConfig, what string, err error) {
+	setMachinePoolInPlaceCondition(config, metav1.ConditionUnknown,
+		bootstrapv1beta1.MachinePoolInPlaceUpdateInternalErrorReason,
+		fmt.Sprintf("%s: %s", what, err))
+}
+
+// markMachinePoolInPlaceDisabled downgrades a condition left behind by the update loop after
+// --enable-machine-pool-in-place-updates has been turned off.
+//
+// Only an existing condition is touched: a pool that has never been updated in place should not
+// grow a condition just because the flag is off.
+func markMachinePoolInPlaceDisabled(config *bootstrapv1beta1.TalosConfig) {
+	existing := meta.FindStatusCondition(config.Status.Conditions, bootstrapv1beta1.MachinePoolInPlaceUpdateCondition)
+	if existing == nil || existing.Reason == bootstrapv1beta1.MachinePoolInPlaceUpdateDisabledReason {
+		return
+	}
+
+	setMachinePoolInPlaceCondition(config, metav1.ConditionUnknown,
+		bootstrapv1beta1.MachinePoolInPlaceUpdateDisabledReason,
+		"MachinePool in-place updates are disabled; the pool's members are no longer being reconciled "+
+			"against the rendered configuration")
 }
 
 // poolBootstrapData returns the pool's bootstrap data secret, re-rendering it first when the

@@ -74,6 +74,19 @@ const (
 	// pool member failed. The pool is walked one node at a time and stops at the first failure.
 	MachinePoolInPlaceUpdateFailedReason = "ApplyFailed"
 
+	// MachinePoolInPlaceUpdateInternalErrorReason surfaces when the pool could not be assessed at
+	// all, e.g. its Machines could not be listed or its bootstrap data could not be rendered.
+	//
+	// The condition goes to Unknown rather than staying on its last value: reporting a pool as up
+	// to date on the strength of a reading that could not be taken is worse than reporting
+	// nothing.
+	MachinePoolInPlaceUpdateInternalErrorReason = capiv1.InternalErrorReason
+
+	// MachinePoolInPlaceUpdateDisabledReason surfaces when a pool that was being updated in place
+	// no longer is, because --enable-machine-pool-in-place-updates was turned off. Without it the
+	// last value the update loop wrote would stand forever.
+	MachinePoolInPlaceUpdateDisabledReason = "Disabled"
+
 	// MachinePoolInPlaceUpdateMachinesUnavailableReason surfaces when the pool has no Machines to
 	// update.
 	//

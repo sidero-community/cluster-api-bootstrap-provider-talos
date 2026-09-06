@@ -24,6 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/inplace"
@@ -165,6 +166,9 @@ type fixture struct {
 	reconciler *TalosConfigReconciler
 	request    ctrl.Request
 	nodes      *nodeRecorder
+
+	// machineListErr, when set, fails every Machine list against the management cluster.
+	machineListErr error
 }
 
 // newFixture builds a reconciler over a cluster whose infrastructure is provisioned, an owner
@@ -243,25 +247,37 @@ func newFixture(t *testing.T, opts fixtureOptions) *fixture {
 		}))
 	}
 
+	nodes := &nodeRecorder{applyErr: map[string]error{}, connectErr: map[string]error{}}
+
+	f := &fixture{
+		request: ctrl.Request{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: ownerName}},
+		nodes:   nodes,
+	}
+
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&bootstrapv1beta1.TalosConfig{}).
 		WithObjects(objects...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*capiv1.MachineList); ok && f.machineListErr != nil {
+					return f.machineListErr
+				}
+
+				return cl.List(ctx, list, opts...)
+			},
+		}).
 		Build()
 
-	nodes := &nodeRecorder{applyErr: map[string]error{}, connectErr: map[string]error{}}
-
-	return &fixture{
-		reconciler: &TalosConfigReconciler{
-			Client:                    c,
-			Log:                       ctrl.Log.WithName("test"),
-			Scheme:                    scheme,
-			MachinePoolInPlaceUpdates: opts.enabled,
-			NodeClientFactory:         nodes.factory(),
-		},
-		request: ctrl.Request{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: ownerName}},
-		nodes:   nodes,
+	f.reconciler = &TalosConfigReconciler{
+		Client:                    c,
+		Log:                       ctrl.Log.WithName("test"),
+		Scheme:                    scheme,
+		MachinePoolInPlaceUpdates: opts.enabled,
+		NodeClientFactory:         nodes.factory(),
 	}
+
+	return f
 }
 
 // poolMachine builds a Machine the way the Cluster API machinepool controller does. An empty
@@ -640,6 +656,65 @@ func TestMachinePoolInPlace_InitialProvisioningIsUnchanged(t *testing.T) {
 
 	config = f.config(t)
 	assert.True(t, ptr.Deref(config.Status.Initialization.DataSecretCreated, false))
+}
+
+// A failure that stops the pool being assessed at all must not leave the previous verdict
+// standing: a pool reported up to date on a reading that was never taken is worse than one
+// reported unknown.
+func TestMachinePoolInPlace_ListFailureClearsStaleVerdict(t *testing.T) {
+	enableMachinePools(t)
+
+	f := newFixture(t, fixtureOptions{
+		ownerKind:    "MachinePool",
+		poolMachines: map[string]string{"pool-1-a": "10.0.0.1"},
+		enabled:      true,
+	})
+
+	f.provision(t)
+	f.reconcile(t)
+
+	require.Equal(t, metav1.ConditionTrue, f.poolCondition(t).Status)
+
+	f.machineListErr = errors.New("etcdserver: request timed out")
+
+	err := f.reconcileExpectingError(t)
+	assert.Contains(t, err.Error(), "request timed out")
+
+	condition := f.poolCondition(t)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+		assert.Equal(t, bootstrapv1beta1.MachinePoolInPlaceUpdateInternalErrorReason, condition.Reason)
+	}
+}
+
+// Turning the flag off stops the update loop, so the verdict it left behind stops being true of
+// anything. Case (e) only covers a pool that was never updated in place at all.
+func TestMachinePoolInPlace_DisablingAfterEnabledDowngradesCondition(t *testing.T) {
+	enableMachinePools(t)
+
+	f := newFixture(t, fixtureOptions{
+		ownerKind:    "MachinePool",
+		poolMachines: map[string]string{"pool-1-a": "10.0.0.1"},
+		enabled:      true,
+	})
+
+	f.provision(t)
+	f.reconcile(t)
+
+	require.Equal(t, metav1.ConditionTrue, f.poolCondition(t).Status)
+
+	f.reconciler.MachinePoolInPlaceUpdates = false
+
+	f.patchSpec(t)
+	f.reconcile(t)
+
+	condition := f.poolCondition(t)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+		assert.Equal(t, bootstrapv1beta1.MachinePoolInPlaceUpdateDisabledReason, condition.Reason)
+	}
+
+	assert.Len(t, f.nodes.applied, 1, "the disabled loop must not touch the pool again")
 }
 
 // Failing to reach a node is a transient condition, not a reason to record it as converged.

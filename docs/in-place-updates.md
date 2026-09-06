@@ -170,6 +170,29 @@ Cluster API is not driving this update, so nothing else would notice a bad confi
 it reached the whole pool. The failure surfaces on the condition and the reconcile is retried
 with backoff.
 
+### Adopting it on an existing pool
+
+> **Read this before upgrading.** The flag defaults to **true**, so upgrading to a build that
+> has it takes effect on existing pools with no operator action.
+
+On the first reconcile after the upgrade, **every existing member of every pool receives one
+`ApplyConfiguration`**. No member carries `bootstrap.cluster.x-k8s.io/applied-config-hash` yet,
+and an un-annotated member that is already current is indistinguishable from one that is stale
+— so the only safe reading is that none of them have converged. For a pool whose spec has not
+changed this is harmless: the bytes are identical, and an identical configuration is a no-op in
+`AUTO` mode.
+
+**Where it is not harmless is a pool whose `TalosConfig` spec was edited while the old behaviour
+froze the Secret.** Such an edit — a `ClusterClass` bootstrap change admitted by the webhook, say
+— was inert: it reached neither the Secret nor the nodes. On the first reconcile after the
+upgrade it is re-rendered into the Secret and applied to every running member, one at a time, in
+`AUTO` mode. Talos decides per change whether it can be applied to the running system, so
+**each member may reboot**. Nothing prompts for this and nothing gates it.
+
+Before upgrading, either reconcile the spec you actually want the pool to run, or opt out with
+`--enable-machine-pool-in-place-updates=false` and turn it on deliberately later. To see what
+would be applied, compare `<pool>-bootstrap-data` against a rendering of the current spec.
+
 ### What the MachinePool path does not do
 
 - **No Talos upgrades.** `machine.install.image` changes are written into the configuration but

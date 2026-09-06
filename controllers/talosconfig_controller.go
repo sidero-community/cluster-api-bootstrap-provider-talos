@@ -265,6 +265,12 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 		if !poolUpdate {
 			log.Info("ignoring an already ready config")
+
+			// Nothing else owns MachinePoolInPlaceUpdate, so a pool that was being updated in place
+			// until the flag was turned off would keep reporting whatever the loop last wrote.
+			if owner.IsMachinePool() {
+				markMachinePoolInPlaceDisabled(config)
+			}
 		}
 
 		v1beta1conditions.MarkTrue(config, bootstrapv1beta1.DataSecretAvailableV1Beta1Condition)

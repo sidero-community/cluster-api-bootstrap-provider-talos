@@ -273,6 +273,7 @@ To roll it out to running machines, use an in-place update or replace the machin
 A `MachinePool` is different, because a pool keeps a single `<pool>-bootstrap-data` Secret that its infrastructure provider re-reads every time it creates an instance.
 There a spec change **is** acted on: CABPT re-renders the Secret in place, keeping its name, and applies the result to the pool's running members over the Talos API, one node at a time.
 This is CABPT's own behaviour rather than the Cluster API in-place update flow, which has no MachinePool path at all; see [in-place updates](docs/in-place-updates.md) for what it does and does not cover, and `--enable-machine-pool-in-place-updates` to turn it off.
+It is on by default, so **upgrading to a build that has it applies the pool's current spec to every running member without prompting** — including a spec edit that was inert while the Secret was frozen, which may reboot each node in turn; read [Adopting it on an existing pool](docs/in-place-updates.md#adopting-it-on-an-existing-pool) before you upgrade.
 
 ## Building
 
