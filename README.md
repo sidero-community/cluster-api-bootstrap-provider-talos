@@ -266,11 +266,13 @@ These statuses are also presented in the `clusterctl describe cluster --show-con
 
 ### Limitations
 
-Once CABPT has rendered a machine's configuration into its `<machine>-bootstrap-data` Secret, editing the `TalosConfig` spec does not re-render it.
+Once CABPT has rendered a `Machine`'s configuration into its `<machine>-bootstrap-data` Secret, editing the `TalosConfig` spec does not re-render it.
+Nothing re-reads that Secret after the machine has booted, so the change takes effect only for machines created afterwards, or through the [in-place update flow](docs/in-place-updates.md).
+To roll it out to running machines, use an in-place update or replace the machines.
 
-This matters for `MachinePool`, where the topology controller manages the `TalosConfig` objects directly instead of rotating a `TalosConfigTemplate`.
-Changing the bootstrap configuration in a `ClusterClass` is admitted for those objects, but it does **not** regenerate an existing bootstrap data Secret: the change takes effect only for machines created afterwards, or through the in-place update flow.
-To roll the change out to running machines, use an in-place update or replace the machines.
+A `MachinePool` is different, because a pool keeps a single `<pool>-bootstrap-data` Secret that its infrastructure provider re-reads every time it creates an instance.
+There a spec change **is** acted on: CABPT re-renders the Secret in place, keeping its name, and applies the result to the pool's running members over the Talos API, one node at a time.
+This is CABPT's own behaviour rather than the Cluster API in-place update flow, which has no MachinePool path at all; see [in-place updates](docs/in-place-updates.md) for what it does and does not cover, and `--enable-machine-pool-in-place-updates` to turn it off.
 
 ## Building
 

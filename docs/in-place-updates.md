@@ -130,9 +130,65 @@ the whole control plane, because an in-place upgrade reboots the node.
 - Talos OS downgrades are not supported in place.
 - Rotating an infrastructure template still rolls control plane machines: a new InfraMachine
   is required, and this provider only produces one by creating a replacement.
-- MachinePools are not supported.
+- MachinePools are handled separately, by CABPT itself — see below.
 - The Talos API interactions are covered by unit tests against a fake client. They have not
   been validated against real hardware — do that before relying on this in production.
+
+## MachinePools
+
+Everything above is the Cluster API in-place update flow, and none of it reaches a MachinePool.
+Cluster API v1.12 defines no MachinePool hook shapes, pool Machines carry no
+`spec.bootstrap.configRef` and an empty `dataSecretName` — so the core Machine controller's
+in-place executor skips them unconditionally — and the machinepool controller hardcodes
+`MachineUpToDate: True`. There is no plug point to implement.
+
+A pool also cannot simply freeze its configuration the way a Machine does. It keeps **one**
+`<pool>-bootstrap-data` Secret, and its infrastructure provider re-reads that Secret every time
+it creates an instance, so a frozen Secret would strand the pool on the configuration it was
+created with — including every instance created afterwards.
+
+CABPT therefore owns this path itself. For a MachinePool-owned `TalosConfig` that is already
+ready, each reconcile:
+
+1. computes the hash of the inputs the machine configuration renders from — the `TalosConfig`
+   spec and the pool's `spec.template.spec.version` — and compares it against the hash stamped
+   on the Secret;
+2. on a mismatch, re-renders and rewrites the **same** Secret in place, so the pool's bootstrap
+   reference and every future instance stay valid;
+3. lists the pool's Machines — the ones Cluster API labels
+   `cluster.x-k8s.io/pool-name=<pool>` and `cluster.x-k8s.io/cluster-name=<cluster>` — and, for
+   each that is not already recorded as running the current configuration, applies exactly the
+   bytes in the Secret with `ApplyConfiguration` in `AUTO` mode;
+4. records the applied hash on the Machine as
+   `bootstrap.cluster.x-k8s.io/applied-config-hash`, so a requeue skips the members that have
+   already converged;
+5. reports progress on the `MachinePoolInPlaceUpdate` condition of the `TalosConfig`
+   (`"2 of 3 MachinePool machines updated"`).
+
+Members are updated **strictly one at a time**, and the pass stops at the first failure:
+Cluster API is not driving this update, so nothing else would notice a bad configuration before
+it reached the whole pool. The failure surfaces on the condition and the reconcile is retried
+with backoff.
+
+### What the MachinePool path does not do
+
+- **No Talos upgrades.** `machine.install.image` changes are written into the configuration but
+  no `Upgrade` call is made, because rebooting pool members is not something this controller can
+  coordinate. Roll the pool to change the Talos version.
+- **No installer image resolution.** The image an infrastructure provider resolves is
+  per-InfraMachine and a pool has no single one, so no image is injected and none is hashed.
+- **Pool Machines are required.** Cluster API creates them only when the infrastructure provider
+  publishes `status.infrastructureMachineKind` on its InfraMachinePool. Without them there is no
+  supported way to find the pool's nodes; the condition says so, the Secret is still re-rendered,
+  and the change reaches instances created from then on.
+- This does not touch `MachineUpToDate` or anything else the machinepool controller owns.
+
+### Turning the MachinePool path off
+
+`--enable-machine-pool-in-place-updates` defaults to true. With `--enable-machine-pool-in-place-updates=false`
+a pool behaves as it always has: the Secret is frozen once rendered and nothing talks to the
+nodes. The flag is independent of `--enable-runtime-extension`; this path is not served through
+the runtime extension at all.
 
 ## Installer image resolution
 
