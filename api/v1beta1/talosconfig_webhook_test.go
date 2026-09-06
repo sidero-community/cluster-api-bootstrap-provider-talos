@@ -39,6 +39,12 @@ func config(annotations map[string]string, spec bootstrapv1beta1.TalosConfigSpec
 	}
 }
 
+func withLabels(cfg *bootstrapv1beta1.TalosConfig, labels map[string]string) *bootstrapv1beta1.TalosConfig {
+	cfg.Labels = labels
+
+	return cfg
+}
+
 func TestValidateUpdate_SpecIsImmutableByDefault(t *testing.T) {
 	t.Parallel()
 
@@ -64,6 +70,59 @@ func TestValidateUpdate_SpecChangeAdmittedDuringInPlaceUpdate(t *testing.T) {
 	_, err := updated.ValidateUpdate(updateContext(), old, updated)
 
 	require.NoError(t, err)
+}
+
+// For a MachinePool the topology controller creates the TalosConfig itself and reconciles
+// ClusterClass changes onto it with a real (non dry-run) apply, so immutability must not bind
+// the objects it owns.
+func TestValidateUpdate_SpecChangeAdmittedForTopologyOwnedConfig(t *testing.T) {
+	t.Parallel()
+
+	old := config(nil, bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.12"})
+	updated := withLabels(
+		config(nil, bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"}),
+		map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""},
+	)
+
+	_, err := updated.ValidateUpdate(updateContext(), old, updated)
+
+	require.NoError(t, err)
+}
+
+// Only the topology ownership label opens the escape hatch; any other label leaves the spec
+// immutable.
+func TestValidateUpdate_SpecChangeRejectedForUnrelatedLabel(t *testing.T) {
+	t.Parallel()
+
+	old := config(nil, bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.12"})
+	updated := withLabels(
+		config(nil, bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"}),
+		map[string]string{"example.com/owned": ""},
+	)
+
+	_, err := updated.ValidateUpdate(updateContext(), old, updated)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "immutable")
+}
+
+// Exempting the immutability check must not exempt the rest of validation.
+func TestValidateUpdate_StillValidatesForTopologyOwnedConfig(t *testing.T) {
+	t.Parallel()
+
+	old := config(nil, bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker"})
+	updated := withLabels(
+		config(nil, bootstrapv1beta1.TalosConfigSpec{
+			GenerateType: "worker",
+			Hostname:     bootstrapv1beta1.HostnameSpec{Source: "NotARealSource"},
+		}),
+		map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""},
+	)
+
+	_, err := updated.ValidateUpdate(updateContext(), old, updated)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hostname")
 }
 
 func TestValidateUpdate_UnchangedSpecIsAlwaysAdmitted(t *testing.T) {
