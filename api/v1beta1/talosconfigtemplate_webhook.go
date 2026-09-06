@@ -39,9 +39,14 @@ func (r *TalosConfigTemplate) ValidateUpdate(ctx context.Context, oldObj *TalosC
 		return nil, err
 	}
 
-	// Skip the immutability check if the request is a dry-run issued by the topology controller (#257)
-	if !topology.IsDryRunRequest(req, r) && !cmp.Equal(r.Spec, old.Spec) {
-		return nil, apierrors.NewBadRequest("TalosConfigTemplate.Spec is immutable")
+	// Only the template spec is frozen: it is baked into every TalosConfig generated from this
+	// template, so changing it would leave existing machines describing a configuration that no
+	// longer exists. Template metadata is merely copied onto configs generated from now on, so it
+	// stays mutable, matching KubeadmConfigTemplate and the infrastructure providers.
+	//
+	// Skip the check entirely if the request is a dry-run issued by the topology controller (#257).
+	if !topology.IsDryRunRequest(req, r) && !cmp.Equal(r.Spec.Template.Spec, old.Spec.Template.Spec) {
+		return nil, apierrors.NewBadRequest("TalosConfigTemplate spec.template.spec is immutable")
 	}
 
 	return nil, nil
