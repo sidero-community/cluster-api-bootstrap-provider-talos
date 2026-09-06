@@ -78,6 +78,22 @@ func TestTemplateValidateUpdate_TemplateMetadataIsMutable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The topology-owned escape is deliberately confined to TalosConfig. Templates are rotated
+// rather than rewritten in place, so nothing legitimately mutates a template spec — not even the
+// topology controller, which only ever does so under a dry-run.
+func TestTemplateValidateUpdate_TemplateSpecIsImmutableEvenWhenTopologyOwned(t *testing.T) {
+	t.Parallel()
+
+	old := configTemplate(nil, templateResource("v1.12"))
+	updated := configTemplate(nil, templateResource("v1.13"))
+	updated.Labels = map[string]string{clusterv1.ClusterTopologyOwnedLabel: ""}
+
+	_, err := updated.ValidateUpdate(updateContext(), old, updated)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.template.spec is immutable")
+}
+
 // The topology controller dry-runs the template it would write; that probe must not be rejected
 // even though it changes the template spec.
 func TestTemplateValidateUpdate_TemplateSpecChangeAdmittedDuringTopologyDryRun(t *testing.T) {

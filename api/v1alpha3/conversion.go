@@ -21,7 +21,7 @@ func (src *TalosConfig) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
-	// Preserve Hub data on down-conversion.
+	// Restore the Hub-only fields that ConvertFrom stashed on the way down.
 	restored := &bsv1beta1.TalosConfig{}
 	ok, err := utilconversion.UnmarshalData(src, restored)
 	if err != nil || !ok {
@@ -46,7 +46,7 @@ func (dst *TalosConfig) ConvertFrom(srcRaw conversion.Hub) error {
 		return err
 	}
 
-	// Preserve Hub data on down-conversion.
+	// Stash the Hub-only fields this version cannot hold, so ConvertTo can restore them.
 	if err := utilconversion.MarshalData(src, dst); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (src *TalosConfigTemplate) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
-	// Preserve Hub data on down-conversion.
+	// Restore the Hub-only fields that ConvertFrom stashed on the way down.
 	restored := &bsv1beta1.TalosConfigTemplate{}
 	ok, err := utilconversion.UnmarshalData(src, restored)
 	if err != nil || !ok {
@@ -91,7 +91,7 @@ func (dst *TalosConfigTemplate) ConvertFrom(srcRaw conversion.Hub) error {
 		return err
 	}
 
-	// Preserve Hub data on down-conversion.
+	// Stash the Hub-only fields this version cannot hold, so ConvertTo can restore them.
 	if err := utilconversion.MarshalData(src, dst); err != nil {
 		return err
 	}

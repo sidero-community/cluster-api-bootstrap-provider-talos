@@ -52,9 +52,19 @@ func (r *TalosConfig) ValidateUpdate(ctx context.Context, oldObj *TalosConfig, n
 	//     clusterv1.UpdateInProgressAnnotation and the desired spec in the same admission request
 	//     (mirroring the KubeadmControlPlane triggerInPlaceUpdate flow), so checking the incoming
 	//     object is sufficient here;
-	//   - the object is topology-owned. For a MachinePool the topology controller creates the
-	//     TalosConfig directly rather than rotating a template, and reconciles ClusterClass
-	//     changes onto it with a real (non dry-run) apply.
+	//   - the object is topology-owned. The motivating case is MachinePools, where the topology
+	//     controller creates the TalosConfig directly rather than rotating a template and then
+	//     reconciles ClusterClass changes onto it with a real (non dry-run) apply. The escape is
+	//     wider than that case: every topology-managed TalosConfig carries the label, the ones a
+	//     MachineDeployment generates from a template included, and the label is a management
+	//     marker rather than proof of caller identity — so this admits any writer on such an
+	//     object.
+	//
+	// Admitting a write is not the same as acting on it. The reconciler bails out early once
+	// Status.Initialization.DataSecretCreated is true, unless an in-place update is in flight
+	// (see controllers/talosconfig_controller.go:244). A topology-owned spec change therefore
+	// only reaches a machine whose bootstrap data has not been rendered yet, or one going
+	// through the in-place update flow; for anything else it is a silent no-op.
 	specManagedByController := topology.IsDryRunRequest(req, r) || IsInPlaceUpdate(r) || isTopologyOwned(r)
 
 	if !specManagedByController && !cmp.Equal(r.Spec, old.Spec) {

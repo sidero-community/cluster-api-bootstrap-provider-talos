@@ -264,6 +264,14 @@ Status:
 
 These statuses are also presented in the `clusterctl describe cluster --show-conditions all` output.
 
+### Limitations
+
+Once CABPT has rendered a machine's configuration into its `<machine>-bootstrap-data` Secret, editing the `TalosConfig` spec does not re-render it.
+
+This matters for `MachinePool`, where the topology controller manages the `TalosConfig` objects directly instead of rotating a `TalosConfigTemplate`.
+Changing the bootstrap configuration in a `ClusterClass` is admitted for those objects, but it does **not** regenerate an existing bootstrap data Secret: the change takes effect only for machines created afterwards, or through the in-place update flow.
+To roll the change out to running machines, use an in-place update or replace the machines.
+
 ## Building
 
 This project can be built simply by running `make release` from the root directory.
