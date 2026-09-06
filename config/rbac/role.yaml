@@ -60,3 +60,11 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - tinkerbell.org
+  resources:
+  - hardware
+  verbs:
+  - get
+  - list
+  - watch

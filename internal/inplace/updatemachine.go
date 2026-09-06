@@ -12,8 +12,6 @@ import (
 
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -21,6 +19,7 @@ import (
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
+	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/installerimage"
 )
 
 const (
@@ -304,36 +303,14 @@ func machineAddresses(machine *clusterv1.Machine) []string {
 	return out
 }
 
-// installerImage reads the installer image the infrastructure provider resolved for a machine.
+// installerImage reads the installer image resolved for a machine, from the
+// same source the config writer uses (internal/installerimage: the Hardware
+// annotation first, the InfraMachine status as transition fallback).
 //
-// This is read from the live InfraMachine rather than taken from the hook request: Cluster API
-// strips status before sending, and the installer image lives in status. Without it the hash
-// recomputed here could not match the one CABPT stamped, and a genuinely fresh secret would be
-// mistaken for a stale one.
+// It is read live rather than taken from the hook request — Cluster API strips
+// status before sending — and it MUST resolve identically to the writer's
+// read: otherwise the hash recomputed here could never match the one CABPT
+// stamped, and a genuinely fresh secret would be mistaken for a stale one.
 func (h *Handler) installerImage(ctx context.Context, machine *clusterv1.Machine) (string, error) {
-	ref := machine.Spec.InfrastructureRef
-	if !ref.IsDefined() {
-		return "", nil
-	}
-
-	infra := &unstructured.Unstructured{}
-	infra.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   ref.APIGroup,
-		Version: "v1beta2",
-		Kind:    ref.Kind,
-	})
-
-	key := types.NamespacedName{Namespace: machine.Namespace, Name: ref.Name}
-	if err := h.client.Get(ctx, key, infra); err != nil {
-		// Treated as "no image resolved" rather than an error, matching how CABPT generates the
-		// configuration when the InfraMachine cannot be read.
-		return "", nil //nolint:nilerr // absence is the expected case
-	}
-
-	image, found, err := unstructured.NestedString(infra.Object, "status", "installerImage")
-	if err != nil || !found {
-		return "", nil
-	}
-
-	return image, nil
+	return installerimage.Resolve(ctx, h.client, machine)
 }

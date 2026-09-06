@@ -127,6 +127,9 @@ func (r *TalosConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools;machinepools/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=runtime.cluster.x-k8s.io,resources=extensionconfigs,verbs=get;list;watch;create;update;patch
+// The per-machine installer image is read from the claimed Hardware's
+// talos.tinkerbell.org/installer-image annotation (internal/installerimage).
+// +kubebuilder:rbac:groups=tinkerbell.org,resources=hardware,verbs=get;list;watch
 
 func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
 	log := r.Log.WithName(controllerName).
