@@ -118,6 +118,21 @@ func TestCanUpdateMachine_BootstrapConfig(t *testing.T) {
 			desired: map[string]any{"generateType": "worker", "strategicPatches": []any{"b"}},
 		},
 		{
+			name:    "adding an image factory block is absorbed",
+			current: map[string]any{"generateType": "worker"},
+			desired: map[string]any{"generateType": "worker", "imageFactory": map[string]any{"extensions": []any{"siderolabs/nvme-cli"}}},
+		},
+		{
+			name: "image factory change is absorbed",
+			current: map[string]any{"generateType": "worker", "imageFactory": map[string]any{
+				"extensions": []any{"siderolabs/nvme-cli"},
+			}},
+			desired: map[string]any{"generateType": "worker", "imageFactory": map[string]any{
+				"extensions": []any{"siderolabs/intel-ucode", "siderolabs/nvme-cli"},
+				"bootloader": "sd-boot",
+			}},
+		},
+		{
 			name:    "clearing a field is absorbed",
 			current: map[string]any{"generateType": "worker", "talosVersion": "v1.12"},
 			desired: map[string]any{"generateType": "worker"},

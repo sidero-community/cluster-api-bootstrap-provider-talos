@@ -11,7 +11,10 @@ import (
 // talosConfigPaths are the TalosConfig spec fields an in-place update can deliver.
 //
 // All of them feed machine configuration generation, so a change is realised by
-// regenerating the config and applying it to the running node.
+// regenerating the config and applying it to the running node. spec.imageFactory belongs
+// here because it only changes machine.install.image: the config is applied without a
+// reboot, and UpdateMachine upgrades the node only when the image tag names a Talos
+// version the node is not already running.
 //
 // spec.generateType is deliberately absent: it selects the machine's role, and turning a
 // worker into a control plane node is not something applying a config can accomplish. That
@@ -22,6 +25,7 @@ var talosConfigPaths = []fieldPath{
 	"spec.data",
 	"spec.hostname",
 	"spec.talosVersion",
+	"spec.imageFactory",
 }
 
 // machinePaths are the core Machine spec fields an in-place update can deliver.

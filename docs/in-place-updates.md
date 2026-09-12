@@ -15,6 +15,7 @@ Talos, so these changes can instead be applied to the running machine.
 |---|---|---|
 | `TalosConfig.spec.configPatches` / `strategicPatches` / `data` / `hostname` | yes | config regenerated, applied with `ApplyConfiguration` in `AUTO` mode — Talos decides whether a reboot is needed |
 | `TalosConfig.spec.talosVersion` | yes | as above; changes the config contract used for generation |
+| `TalosConfig.spec.imageFactory` | yes | config regenerated with the new `machine.install.image`; the node is upgraded only if the image tag names a Talos version it is not already running |
 | `Machine.spec.version` (Kubernetes) | yes | the version feeds the control plane component and kubelet images in the machine config |
 | Talos OS version (`machine.install.image`) | yes | Talos `Upgrade` API; Talos cordons and drains the node itself |
 | `TalosConfig.spec.generateType` | **no** | a worker↔control plane role flip cannot be applied to a running node |
