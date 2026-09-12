@@ -12,8 +12,6 @@ import (
 
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -308,36 +306,28 @@ func MachineAddresses(machine *clusterv1.Machine) []string {
 	return out
 }
 
-// installerImage reads the installer image the infrastructure provider resolved for a machine.
+// installerImage reads the installer image CABPT resolved for the machine's TalosConfig.
 //
-// This is read from the live InfraMachine rather than taken from the hook request: Cluster API
-// strips status before sending, and the installer image lives in status. Without it the hash
-// recomputed here could not match the one CABPT stamped, and a genuinely fresh secret would be
-// mistaken for a stale one.
+// It is read from the live TalosConfig rather than taken from the hook request: Cluster API
+// strips status before sending, and the image lives in status.imageFactory. Without it the
+// hash recomputed here could not match the one CABPT stamped, and a genuinely fresh secret
+// would be mistaken for a stale one.
 func (h *Handler) installerImage(ctx context.Context, machine *clusterv1.Machine) (string, error) {
-	ref := machine.Spec.InfrastructureRef
+	ref := machine.Spec.Bootstrap.ConfigRef
 	if !ref.IsDefined() {
 		return "", nil
 	}
 
-	infra := &unstructured.Unstructured{}
-	infra.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   ref.APIGroup,
-		Version: "v1beta2",
-		Kind:    ref.Kind,
-	})
+	config := &bootstrapv1beta1.TalosConfig{}
 
 	key := types.NamespacedName{Namespace: machine.Namespace, Name: ref.Name}
-	if err := h.client.Get(ctx, key, infra); err != nil {
-		// Treated as "no image resolved" rather than an error, matching how CABPT generates the
-		// configuration when the InfraMachine cannot be read.
-		return "", nil //nolint:nilerr // absence is the expected case
+	if err := h.client.Get(ctx, key, config); err != nil {
+		return "", fmt.Errorf("failed to read TalosConfig %s for the installer image: %w", key, err)
 	}
 
-	image, found, err := unstructured.NestedString(infra.Object, "status", "installerImage")
-	if err != nil || !found {
+	if config.Status.ImageFactory == nil {
 		return "", nil
 	}
 
-	return image, nil
+	return config.Status.ImageFactory.InstallerImage, nil
 }

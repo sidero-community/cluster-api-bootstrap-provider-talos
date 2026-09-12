@@ -84,7 +84,7 @@ type updateFixture struct {
 
 // newUpdateFixture wires a handler against a fake node and a fake management cluster
 // holding a bootstrap data secret stamped with secretHash.
-func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash string) *updateFixture {
+func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash, resolvedImage string) *updateFixture {
 	t.Helper()
 
 	const (
@@ -97,6 +97,7 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, clusterv1.AddToScheme(scheme))
+	require.NoError(t, bootstrapv1beta1.AddToScheme(scheme))
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -119,8 +120,16 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 		},
 	}
 
+	liveConfig := &bootstrapv1beta1.TalosConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "machine-1"},
+		Spec:       bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"},
+	}
+	if resolvedImage != "" {
+		liveConfig.Status.ImageFactory = &bootstrapv1beta1.ImageFactoryStatus{InstallerImage: resolvedImage}
+	}
+
 	handler := NewHandler(
-		fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, liveMachine).Build(),
+		fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, liveMachine, liveConfig).Build(),
 		func(context.Context, types.NamespacedName, []string) (NodeClient, error) { return node, nil },
 	)
 
@@ -129,7 +138,10 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash stri
 		Spec: clusterv1.MachineSpec{
 			ClusterName: cluster,
 			Version:     "v1.34.0",
-			Bootstrap:   clusterv1.Bootstrap{DataSecretName: ptr.To("machine-1-bootstrap-data")},
+			Bootstrap: clusterv1.Bootstrap{
+				DataSecretName: ptr.To("machine-1-bootstrap-data"),
+				ConfigRef:      clusterv1.ContractVersionedObjectReference{APIGroup: bootstrapv1beta1.GroupVersion.Group, Kind: "TalosConfig", Name: "machine-1"},
+			},
 		},
 		// Deliberately no status: cleanupMachine drops it before the request is sent.
 	}
@@ -167,7 +179,7 @@ func freshHash(t *testing.T) string {
 func TestUpdateMachine_WaitsForRegeneratedConfig(t *testing.T) {
 	t.Parallel()
 
-	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", "stale-hash")
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", "stale-hash", "")
 
 	resp := &runtimehooksv1.UpdateMachineResponse{}
 	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
@@ -181,7 +193,7 @@ func TestUpdateMachine_WaitsForRegeneratedConfig(t *testing.T) {
 func TestUpdateMachine_AppliesConfigWhenFresh(t *testing.T) {
 	t.Parallel()
 
-	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t))
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
 
 	resp := &runtimehooksv1.UpdateMachineResponse{}
 	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
@@ -195,7 +207,7 @@ func TestUpdateMachine_AppliesConfigWhenFresh(t *testing.T) {
 func TestUpdateMachine_UpgradesWhenInstallerImageDiffers(t *testing.T) {
 	t.Parallel()
 
-	f := newUpdateFixture(t, "v1.12.3", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t))
+	f := newUpdateFixture(t, "v1.12.3", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
 
 	resp := &runtimehooksv1.UpdateMachineResponse{}
 	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
@@ -260,4 +272,41 @@ func TestNeedsUpgradeIgnoresUnversionedTags(t *testing.T) {
 			assert.Equal(t, tc.want, needsUpgrade(tc.image, tc.running))
 		})
 	}
+}
+
+// The resolved installer image lives in TalosConfig status, which Cluster API strips from the
+// hook request; the handler must read the live object or every regenerated secret looks stale.
+func TestUpdateMachine_HashesTheRecordedInstallerImage(t *testing.T) {
+	t.Parallel()
+
+	const image = "factory.example.test/metal-installer/abc:v1.13.0"
+
+	hash, err := bootstrapv1beta1.InPlaceConfigHash(
+		bootstrapv1beta1.TalosConfigSpec{GenerateType: "worker", TalosVersion: "v1.13"}, "1.34.0", image)
+	require.NoError(t, err)
+
+	f := newUpdateFixture(t, "v1.13.0", image, hash, image)
+
+	resp := &runtimehooksv1.UpdateMachineResponse{}
+	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
+
+	require.Equal(t, runtimehooksv1.ResponseStatusSuccess, resp.Status, resp.Message)
+	assert.Len(t, f.node.applied, 1, "a secret hashed with the recorded image is fresh")
+	assert.Zero(t, resp.RetryAfterSeconds)
+}
+
+func TestUpdateMachine_WaitsWhenTheSecretPredatesTheImage(t *testing.T) {
+	t.Parallel()
+
+	const image = "factory.example.test/metal-installer/abc:v1.13.0"
+
+	// Hashed without the image: what a secret rendered before spec.imageFactory was set carries.
+	f := newUpdateFixture(t, "v1.13.0", image, freshHash(t), image)
+
+	resp := &runtimehooksv1.UpdateMachineResponse{}
+	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
+
+	require.Equal(t, runtimehooksv1.ResponseStatusSuccess, resp.Status, resp.Message)
+	assert.Positive(t, resp.RetryAfterSeconds, "must wait for CABPT to re-render with the image")
+	assert.Empty(t, f.node.applied)
 }
