@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +32,7 @@ import (
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/controllers"
+	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/imagefactory"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/inplace"
 	// +kubebuilder:scaffold:imports
 )
@@ -43,6 +45,7 @@ var (
 	webhookPort          int
 	watchFilterValue     string
 	webhookCertDir       string
+	imageFactoryURL      string
 	managerOptions       = flags.ManagerOptions{}
 	logOptions           = logs.NewOptions()
 
@@ -97,6 +100,11 @@ func InitFlags(fs *pflag.FlagSet) {
 			"result to the pool's running members over the Talos API, one node at a time. Cluster API has no "+
 			"in-place update flow for MachinePools, so this is implemented by CABPT rather than through the "+
 			"runtime extension hooks. Set to false to keep a pool's rendered configuration frozen once written.")
+
+	fs.StringVar(&imageFactoryURL, "image-factory-url", imagefactory.DefaultURL,
+		"Base URL of the Talos Image Factory used to register the schematic declared in a TalosConfig's "+
+			"spec.imageFactory and to resolve its Talos version. The host of this URL becomes the registry in "+
+			"the rendered machine.install.image.")
 
 	flags.AddManagerOptions(fs, &managerOptions)
 
@@ -184,6 +192,12 @@ func main() {
 }
 
 func setupReconcilers(ctx context.Context, mgr manager.Manager) {
+	factoryClient, err := imagefactory.NewClient(imageFactoryURL, nil)
+	if err != nil {
+		setupLog.Error(err, "invalid --image-factory-url")
+		os.Exit(1)
+	}
+
 	if err := (&controllers.TalosConfigReconciler{
 		Client:                    mgr.GetClient(),
 		Log:                       ctrl.Log.WithName("controllers").WithName("TalosConfig"),
@@ -191,6 +205,7 @@ func setupReconcilers(ctx context.Context, mgr manager.Manager) {
 		WatchFilterValue:          watchFilterValue,
 		MachinePoolInPlaceUpdates: enableMachinePoolInPlaceUpdates,
 		NodeClientFactory:         inplace.NewNodeClient(mgr.GetClient()),
+		ImageFactory:              imagefactory.NewCached(factoryClient, 10*time.Minute),
 	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 10}); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TalosConfig")
 		os.Exit(1)

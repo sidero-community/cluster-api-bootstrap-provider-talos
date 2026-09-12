@@ -198,8 +198,8 @@ would be applied, compare `<pool>-bootstrap-data` against a rendering of the cur
 - **No Talos upgrades.** `machine.install.image` changes are written into the configuration but
   no `Upgrade` call is made, because rebooting pool members is not something this controller can
   coordinate. Roll the pool to change the Talos version.
-- **No installer image resolution.** The image an infrastructure provider resolves is
-  per-InfraMachine and a pool has no single one, so no image is injected and none is hashed.
+- **Installer image.** `machine.install.image` comes from `spec.imageFactory` on the TalosConfig and
+  is rendered and hashed for a pool exactly as for a Machine.
 - **Pool Machines are required.** Cluster API creates them only when the infrastructure provider
   publishes `status.infrastructureMachineKind` on its InfraMachinePool. Without them there is no
   supported way to find the pool's nodes; the condition says so, the Secret is still re-rendered,
@@ -215,22 +215,16 @@ the runtime extension at all.
 
 ## Installer image resolution
 
-An infrastructure provider may publish `status.installerImage` on the InfraMachine to declare
-which Talos installer image a machine should run. CABPT reads that field generically — via
-unstructured access, with no import of any infrastructure provider — and injects it as
-`machine.install.image` when generating the machine configuration.
+`machine.install.image` is rendered by CABPT itself from `spec.imageFactory` on the TalosConfig:
+the schematic is registered with the Talos Image Factory, the Talos version is pinned in
+`status.imageFactory.talosVersion`, and the resulting
+`<factory>/metal-installer/<schematic>:<version>` is applied as a strategic patch ahead of any
+`strategicPatches`, so an explicit patch still wins.
 
-It is applied *before* any `strategicPatches` in the TalosConfig, so an explicit patch still
-wins. The resolved image is a good default, not an override of intent.
+The image is part of the bootstrap data secret's config hash, so a change to the extension set
+or a version bump changes the hash, `UpdateMachine` sees a stale secret until CABPT re-renders,
+applies the new configuration and upgrades the node to the new image. The `UpdateMachine`
+handler reads the image from the live TalosConfig status, because Cluster API strips status
+from the hook request.
 
-This is what closes the loop with the Talos `Upgrade` API: `UpdateMachine` compares
-`machine.install.image` against the node's running version, so an image resolved by the
-infrastructure provider becomes the image the node upgrades to in place.
-
-Because the injected image does not appear anywhere in `TalosConfig.spec`, it is included in
-the bootstrap data secret's config hash. Without that, changing the resolved image would
-change the rendered configuration while leaving the hash untouched, and the extension would
-mistake a stale secret for a fresh one.
-
-Cluster API Provider Tinkerbell resolves this field from a Talos Image Factory schematic
-built out of the machine's real hardware; see `docs/talos-image-factory.md` there.
+See `docs/design/2026-09-12-image-factory-schematic.md` for the resolution rules.
