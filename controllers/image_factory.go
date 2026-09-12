@@ -16,6 +16,10 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/cluster-api/util/conditions"
+
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/imagefactory"
 )
@@ -193,4 +197,59 @@ func resolveImageFactory(ctx context.Context, api imagefactory.API, spec bootstr
 		InstallerImage: api.InstallerImage(id, version),
 		ObservedInputs: inputs,
 	}, nil
+}
+
+// resolveInstallerImage resolves spec.imageFactory for config, records the result and the
+// ImageFactoryResolved condition on it, and returns the installer image to render. A config
+// without the block returns "" and carries neither status nor condition.
+func (r *TalosConfigReconciler) resolveInstallerImage(ctx context.Context, config *bootstrapv1beta1.TalosConfig) (string, error) {
+	if config.Spec.ImageFactory == nil {
+		config.Status.ImageFactory = nil
+		meta.RemoveStatusCondition(&config.Status.Conditions, bootstrapv1beta1.ImageFactoryResolvedCondition)
+
+		return "", nil
+	}
+
+	if r.ImageFactory == nil {
+		err := errors.New("spec.imageFactory is set but the controller has no Image Factory client; set --image-factory-url")
+		conditions.Set(config, metav1.Condition{
+			Type:    bootstrapv1beta1.ImageFactoryResolvedCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  bootstrapv1beta1.ImageFactoryUnavailableReason,
+			Message: err.Error(),
+		})
+
+		return "", err
+	}
+
+	status, err := resolveImageFactory(ctx, r.ImageFactory, config.Spec, config.Status.ImageFactory)
+	if err != nil {
+		conditions.Set(config, metav1.Condition{
+			Type:    bootstrapv1beta1.ImageFactoryResolvedCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  imageFactoryReason(err),
+			Message: err.Error(),
+		})
+
+		return "", fmt.Errorf("resolving spec.imageFactory: %w", err)
+	}
+
+	config.Status.ImageFactory = status
+	conditions.Set(config, metav1.Condition{
+		Type:    bootstrapv1beta1.ImageFactoryResolvedCondition,
+		Status:  metav1.ConditionTrue,
+		Reason:  bootstrapv1beta1.ImageFactoryResolvedReason,
+		Message: status.InstallerImage,
+	})
+
+	return status.InstallerImage, nil
+}
+
+// installerImageFromStatus returns the installer image the last resolution recorded, or "".
+func installerImageFromStatus(config *bootstrapv1beta1.TalosConfig) string {
+	if config.Status.ImageFactory == nil {
+		return ""
+	}
+
+	return config.Status.ImageFactory.InstallerImage
 }

@@ -155,11 +155,11 @@ func markMachinePoolInPlaceDisabled(config *bootstrapv1beta1.TalosConfig) {
 // The secret keeps its name across a re-render, so the MachinePool's bootstrap reference and
 // every instance created from it stay valid.
 func (r *TalosConfigReconciler) poolBootstrapData(ctx context.Context, log logr.Logger, scope *TalosConfigScope) (*corev1.Secret, error) {
-	// The installer image an infrastructure provider resolves is per-InfraMachine, and a pool has
-	// no single one; installerImageFor also only knows how to read a Machine owner, so it resolves
-	// to nothing here. The renderer therefore injects no image for a pool, and this hash has to be
-	// computed the same way or it would never agree with what writeBootstrapData stamped.
-	desiredHash, err := renderedConfigHash(scope, "")
+	// The installer image is resolved per TalosConfig from spec.imageFactory and recorded in
+	// status, so a pool renders it like a Machine does. The gate hashes the recorded image: a
+	// spec change that alters the schematic changes the spec hash on its own, and after the
+	// re-render the recorded image matches what the renderer stamped.
+	desiredHash, err := renderedConfigHash(scope, installerImageFromStatus(scope.Config))
 	if err != nil {
 		return nil, err
 	}

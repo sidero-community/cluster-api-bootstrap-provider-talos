@@ -53,6 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
+	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/imagefactory"
 	"github.com/siderolabs/cluster-api-bootstrap-provider-talos/internal/inplace"
 	// +kubebuilder:scaffold:imports
 )
@@ -82,6 +83,11 @@ type TalosConfigReconciler struct {
 	// built from the cluster's talosconfig secret is used; tests substitute a fake so the update
 	// loop can be exercised without hardware.
 	NodeClientFactory inplace.NodeClientFactory
+
+	// ImageFactory registers the schematic declared in spec.imageFactory and resolves the
+	// Talos version for the installer image. Required when any TalosConfig sets the block;
+	// nil is only acceptable for deployments that never do.
+	ImageFactory imagefactory.API
 }
 
 type TalosConfigScope struct {
@@ -176,6 +182,7 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			patch.WithOwnedConditions{
 				Conditions: []string{
 					bootstrapv1beta1.DataSecretAvailableCondition,
+					bootstrapv1beta1.ImageFactoryResolvedCondition,
 				},
 			},
 			patch.WithOwnedV1Beta1Conditions{
@@ -444,10 +451,11 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		retData.BootstrapData = string(patchedBytes)
 	}
 
-	// The infrastructure provider may have resolved an installer image for this machine, e.g.
-	// from a Talos Image Factory schematic built out of its actual hardware. Apply it first so
-	// an explicit strategic patch in the TalosConfig still takes precedence.
-	installerImage, err := installerImageFor(ctx, r.Client, tcScope.ConfigOwner.Unstructured)
+	// spec.imageFactory names the Image Factory schematic this machine installs and upgrades
+	// with. Resolve it (registering the schematic and pinning the Talos version) and apply the
+	// resulting installer image first, so an explicit strategic patch in the TalosConfig still
+	// takes precedence.
+	installerImage, err := r.resolveInstallerImage(ctx, config)
 	if err != nil {
 		return err
 	}
