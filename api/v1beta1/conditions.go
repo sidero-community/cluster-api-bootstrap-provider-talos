@@ -96,3 +96,25 @@ const (
 	// instances only.
 	MachinePoolInPlaceUpdateMachinesUnavailableReason = "PoolMachinesUnavailable"
 )
+
+// ImageFactoryResolved reports whether the schematic declared in spec.imageFactory was
+// registered with the Talos Image Factory and turned into an installer image.
+const (
+	// ImageFactoryResolvedCondition is the condition type.
+	ImageFactoryResolvedCondition = "ImageFactoryResolved"
+
+	// ImageFactoryResolvedReason: the installer image in status.imageFactory is current.
+	ImageFactoryResolvedReason = "Resolved"
+
+	// ImageFactoryUnknownExtensionReason: an extension is not offered for the Talos version.
+	ImageFactoryUnknownExtensionReason = "UnknownExtension"
+
+	// ImageFactoryNoReleasedPatchReason: the bare minor in talosVersion has no released patch.
+	ImageFactoryNoReleasedPatchReason = "NoReleasedPatch"
+
+	// ImageFactoryInvalidSpecReason: talosVersion or the block is not usable.
+	ImageFactoryInvalidSpecReason = "InvalidSpec"
+
+	// ImageFactoryUnavailableReason: the Factory could not be reached or answered an error.
+	ImageFactoryUnavailableReason = "FactoryUnavailable"
+)

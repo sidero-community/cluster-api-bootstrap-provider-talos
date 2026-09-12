@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/cluster-api/util/topology"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -26,7 +28,9 @@ var _ admission.Validator[*TalosConfigTemplate] = &TalosConfigTemplate{}
 
 // ValidateCreate implements admission.Validator so a webhook will be registered for the type
 func (r *TalosConfigTemplate) ValidateCreate(ctx context.Context, obj *TalosConfigTemplate) (admission.Warnings, error) {
-	return nil, nil
+	r = obj
+
+	return nil, r.validate()
 }
 
 // ValidateUpdate implements admission.Validator so a webhook will be registered for the type
@@ -49,10 +53,21 @@ func (r *TalosConfigTemplate) ValidateUpdate(ctx context.Context, oldObj *TalosC
 		return nil, apierrors.NewBadRequest("TalosConfigTemplate spec.template.spec is immutable")
 	}
 
-	return nil, nil
+	return nil, r.validate()
 }
 
 // ValidateDelete implements admission.Validator so a webhook will be registered for the type
 func (r *TalosConfigTemplate) ValidateDelete(ctx context.Context, obj *TalosConfigTemplate) (admission.Warnings, error) {
 	return nil, nil
+}
+
+func (r *TalosConfigTemplate) validate() error {
+	allErrs := validateImageFactory(field.NewPath("spec", "template", "spec", "imageFactory"), r.Spec.Template.Spec.ImageFactory)
+	if len(allErrs) == 0 {
+		return nil
+	}
+
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: GroupVersion.Group, Kind: "TalosConfigTemplate"},
+		r.Name, allErrs)
 }

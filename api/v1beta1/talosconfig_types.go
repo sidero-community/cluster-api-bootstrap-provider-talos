@@ -37,7 +37,65 @@ type TalosConfigSpec struct {
 
 	// Set hostname in the machine configuration to some value.
 	Hostname HostnameSpec `json:"hostname,omitempty"`
+
+	// ImageFactory declares the Talos Image Factory schematic the machine installs and
+	// upgrades with. When set, CABPT registers the schematic with the Factory and renders
+	// machine.install.image as <factory>/metal-installer/<schematic>:<version>.
+	// +optional
+	ImageFactory *ImageFactorySpec `json:"imageFactory,omitempty"`
 	// Important: Run "make" to regenerate code after modifying this file
+}
+
+// ImageFactorySpec mirrors the Talos Image Factory schematic customization.
+type ImageFactorySpec struct {
+	// Extensions are official system extension names, e.g. siderolabs/nvme-cli. The
+	// Factory picks the extension versions matching the Talos version.
+	// +optional
+	Extensions []string `json:"extensions,omitempty"`
+
+	// ExtraKernelArgs are baked into the images the Factory builds from the schematic.
+	// +optional
+	ExtraKernelArgs []string `json:"extraKernelArgs,omitempty"`
+
+	// Overlay selects a single-board-computer overlay.
+	// +optional
+	Overlay *ImageFactoryOverlay `json:"overlay,omitempty"`
+
+	// Bootloader selects the bootloader of the disk image; the Factory default when empty.
+	// +kubebuilder:validation:Enum=auto;dual-boot;grub;sd-boot
+	// +optional
+	Bootloader string `json:"bootloader,omitempty"`
+}
+
+// ImageFactoryOverlay is the Factory overlay block.
+type ImageFactoryOverlay struct {
+	// Name is the overlay name, e.g. rpi_generic.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Image is the overlay container image, e.g. ghcr.io/siderolabs/sbc-raspberrypi.
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+}
+
+// ImageFactoryStatus records the schematic CABPT resolved for this configuration.
+type ImageFactoryStatus struct {
+	// TalosVersion is the full version the installer image is tagged with.
+	// +optional
+	TalosVersion string `json:"talosVersion,omitempty"`
+
+	// SchematicID is the content-addressed ID the Factory returned.
+	// +optional
+	SchematicID string `json:"schematicID,omitempty"`
+
+	// InstallerImage is the machine.install.image rendered into the configuration.
+	// +optional
+	InstallerImage string `json:"installerImage,omitempty"`
+
+	// ObservedInputs is a hash of spec.talosVersion and spec.imageFactory. While it matches
+	// the current spec the fields above are reused without asking the Factory.
+	// +optional
+	ObservedInputs string `json:"observedInputs,omitempty"`
 }
 
 // HostnameSource is the definition of hostname source.
@@ -71,6 +129,10 @@ type TalosConfigStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	DataSecretName string `json:"dataSecretName,omitempty"`
+
+	// ImageFactory records the schematic resolved from spec.imageFactory.
+	// +optional
+	ImageFactory *ImageFactoryStatus `json:"imageFactory,omitempty"`
 
 	// ObservedGeneration is the latest generation observed by the controller.
 	// +optional
