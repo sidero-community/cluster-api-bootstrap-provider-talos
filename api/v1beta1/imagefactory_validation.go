@@ -13,9 +13,10 @@ import (
 // ImageFactoryBootloaders are the values the Factory accepts for customization.bootloader.
 var ImageFactoryBootloaders = []string{"auto", "dual-boot", "grub", "sd-boot"}
 
-// validateImageFactory checks the parts of an imageFactory block the CRD schema cannot:
+// ValidateImageFactory checks the parts of an imageFactory block the CRD schema cannot:
 // extension names, overlay completeness and the bootloader value. A nil block is valid.
-func validateImageFactory(path *field.Path, spec *ImageFactorySpec) field.ErrorList {
+// It is exported for providers that embed TalosConfigSpec in their own types.
+func ValidateImageFactory(path *field.Path, spec *ImageFactorySpec) field.ErrorList {
 	var errs field.ErrorList
 
 	if spec == nil {

@@ -28,6 +28,10 @@ func (src *TalosConfig) ConvertTo(dstRaw conversion.Hub) error {
 		return err
 	}
 
+	// spec.imageFactory and status.imageFactory exist only in the hub.
+	dst.Spec.ImageFactory = restored.Spec.ImageFactory
+	dst.Status.ImageFactory = restored.Status.ImageFactory
+
 	// Recover intent for bool values converted to *bool.
 	initialization := bsv1beta1.TalosConfigInitializationStatus{}
 	restoredBootstrapDataSecretCreated := restored.Status.Initialization.DataSecretCreated
@@ -77,6 +81,9 @@ func (src *TalosConfigTemplate) ConvertTo(dstRaw conversion.Hub) error {
 	if err != nil || !ok {
 		return err
 	}
+
+	// spec.template.spec.imageFactory exists only in the hub.
+	dst.Spec.Template.Spec.ImageFactory = restored.Spec.Template.Spec.ImageFactory
 
 	// spec.template.metadata has no v1alpha3 peer, so it only survives via the annotation.
 	dst.Spec.Template.ObjectMeta = restored.Spec.Template.ObjectMeta
@@ -185,4 +192,11 @@ func Convert_v1beta1_Condition_To_v1_Condition(in *clusterv1beta1.Condition, out
 
 func Convert_v1_Condition_To_v1beta1_Condition(in *metav1.Condition, out *clusterv1beta1.Condition, s apimachineryconversion.Scope) error {
 	return clusterv1beta1.Convert_v1_Condition_To_v1beta1_Condition(in, out, s)
+}
+
+// Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec converts the hub spec down to
+// v1alpha3. spec.imageFactory has no v1alpha3 counterpart and is dropped here; ConvertFrom
+// stashes the hub object so ConvertTo restores it on the way back up.
+func Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(in *bsv1beta1.TalosConfigSpec, out *TalosConfigSpec, s apimachineryconversion.Scope) error {
+	return autoConvert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(in, out, s)
 }

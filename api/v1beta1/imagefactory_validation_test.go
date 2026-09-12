@@ -10,7 +10,7 @@ import (
 func TestValidateImageFactory(t *testing.T) {
 	path := field.NewPath("spec", "imageFactory")
 
-	if errs := validateImageFactory(path, nil); len(errs) != 0 {
+	if errs := ValidateImageFactory(path, nil); len(errs) != 0 {
 		t.Fatalf("nil block must be valid, got %v", errs)
 	}
 
@@ -20,7 +20,7 @@ func TestValidateImageFactory(t *testing.T) {
 		Overlay:         &ImageFactoryOverlay{Name: "rpi_generic", Image: "ghcr.io/siderolabs/sbc-raspberrypi"},
 		Bootloader:      "sd-boot",
 	}
-	if errs := validateImageFactory(path, valid); len(errs) != 0 {
+	if errs := ValidateImageFactory(path, valid); len(errs) != 0 {
 		t.Fatalf("valid block rejected: %v", errs)
 	}
 
@@ -38,7 +38,7 @@ func TestValidateImageFactory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := validateImageFactory(path, tt.spec)
+			errs := ValidateImageFactory(path, tt.spec)
 			if len(errs) != 1 || !strings.HasPrefix(errs[0].Field, tt.want) {
 				t.Fatalf("errs = %v, want one error at %s", errs, tt.want)
 			}

@@ -102,7 +102,7 @@ func (r *TalosConfig) validate() error {
 		)
 	}
 
-	allErrs = append(allErrs, validateImageFactory(field.NewPath("spec").Child("imageFactory"), r.Spec.ImageFactory)...)
+	allErrs = append(allErrs, ValidateImageFactory(field.NewPath("spec").Child("imageFactory"), r.Spec.ImageFactory)...)
 
 	if len(allErrs) == 0 {
 		return nil
