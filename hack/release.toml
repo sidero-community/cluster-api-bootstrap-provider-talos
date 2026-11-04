@@ -6,45 +6,28 @@ github_repo = "siderolabs/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.8.2"
+previous = "v0.9.0"
 
 pre_release = false
 
 [notes]
 
-[notes.CAPI]
-    title = "CAPI"
+[notes.upstream]
+    title = "Upstream sync"
     description = """\
-CABPT is now built against CAPI v1.14 (v1beta2 contract, unchanged), which adds
-Kubernetes 1.37 for management and workload clusters. Kubernetes 1.37 workload
-clusters need CAPI core v1.14.1 or later on the management cluster.
+The fork is rebased onto the upstream `siderolabs/cluster-api-bootstrap-provider-talos` main
+and takes its fixes: the TalosConfig `Ready` condition is set again, summarizing
+`DataSecretAvailable` (it was never set since the move to v1beta2 conditions); the v1alpha3
+conversion no longer returns early for objects without a conversion-data annotation, so their
+status converts correctly; and the manager role gains the finalizer permissions on TalosConfigs
+and Clusters that Cluster API 1.14 expects. Machine configuration patches are no longer logged.
 """
 
-[notes.talosconfig]
-    title = "TalosConfig status.talosConfig removed"
+[notes.deps]
+    title = "Dependencies"
     description = """\
-TalosConfig no longer reports a talosconfig in `status.talosConfig`; the field is not part of the
-`v1beta1` API and stays empty when read through `v1alpha3`.
-Use the cluster-wide `<cluster-name>-talosconfig` secret instead (key `talosconfig`).
-"""
-
-[notes.Talos]
-    title = "Talos 1.14"
-    description = """\
-CABPT is now compatible with Talos v1.14.0+. Configurations without a `talosVersion` are
-generated for Talos 1.14 and use the multi-document Kubernetes, discovery and identity
-configuration; pin `talosVersion` on configs that target older nodes.
-On Talos 1.14 contracts the resolved installer image is rendered as an
-UnattendedInstallConfig document (disk selector `system_disk`; patch the document to
-change it). In-place upgrades of Talos 1.13+ nodes go through the lifecycle service.
-"""
-
-[notes.api]
-    title = "API"
-    description = """\
-`status.deprecated.v1beta1` is removed from TalosConfig: only the v1beta2 conditions and
-`status.initialization` remain. v1alpha3 clients still see old-shape conditions, derived
-from the v1beta2 ones.
+Kubernetes libraries 0.37.2, controller-runtime 0.25.2, Cluster API 1.14.3, Talos machinery
+1.14.5 and yaml.v3.
 """
 
 preface = """\
