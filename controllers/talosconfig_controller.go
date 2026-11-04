@@ -322,7 +322,7 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Reconcile status for machines that already have a secret reference, but our status isn't up to date.
 	// This case solves the pivoting scenario (or a backup restore) which doesn't preserve the status subresource on objects.
 	if owner.DataSecretName() != nil && (!ptr.Deref(config.Status.Initialization.DataSecretCreated, false) || config.Status.DataSecretName == "") {
-		config.Status.Initialization.DataSecretCreated = ptr.To(true)
+		config.Status.Initialization.DataSecretCreated = new(true)
 		config.Status.DataSecretName = *owner.DataSecretName()
 
 		conditions.Set(config, metav1.Condition{
@@ -340,7 +340,7 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	config.Status.Initialization.DataSecretCreated = ptr.To(true)
+	config.Status.Initialization.DataSecretCreated = new(true)
 
 	conditions.Set(config, metav1.Condition{
 		Type:   bootstrapv1beta1.DataSecretAvailableCondition,

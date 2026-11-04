@@ -204,7 +204,7 @@ func newFixture(t *testing.T, opts fixtureOptions) *fixture {
 			},
 			Status: capiv1.ClusterStatus{
 				Initialization: capiv1.ClusterInitializationStatus{
-					InfrastructureProvisioned: ptr.To(true),
+					InfrastructureProvisioned: new(true),
 				},
 			},
 		},

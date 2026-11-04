@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
 
@@ -95,7 +94,7 @@ func TestTalosConfigConvertFromDerivesLegacyConditions(t *testing.T) {
 	hub := &bootstrapv1beta1.TalosConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		Status: bootstrapv1beta1.TalosConfigStatus{
-			Initialization: bootstrapv1beta1.TalosConfigInitializationStatus{DataSecretCreated: ptr.To(true)},
+			Initialization: bootstrapv1beta1.TalosConfigInitializationStatus{DataSecretCreated: new(true)},
 			Conditions: []metav1.Condition{{
 				Type: "DataSecretAvailable", Status: metav1.ConditionTrue, Reason: "Available", Message: "rendered", LastTransitionTime: transition,
 			}},

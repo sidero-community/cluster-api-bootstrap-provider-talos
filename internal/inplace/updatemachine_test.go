@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -176,7 +175,7 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash, res
 			ClusterName: cluster,
 			Version:     "v1.34.0",
 			Bootstrap: clusterv1.Bootstrap{
-				DataSecretName: ptr.To("machine-1-bootstrap-data"),
+				DataSecretName: new("machine-1-bootstrap-data"),
 				ConfigRef:      clusterv1.ContractVersionedObjectReference{APIGroup: bootstrapv1beta1.GroupVersion.Group, Kind: "TalosConfig", Name: "machine-1"},
 			},
 		},

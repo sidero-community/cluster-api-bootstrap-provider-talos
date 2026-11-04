@@ -46,7 +46,7 @@ func newImageFactoryFixture(t *testing.T, spec bootstrapv1beta1.TalosConfigSpec,
 		&capiv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{Name: testClusterName, Namespace: testNamespace},
 			Spec:       capiv1.ClusterSpec{ControlPlaneEndpoint: capiv1.APIEndpoint{Host: "1.2.3.4", Port: 6443}},
-			Status:     capiv1.ClusterStatus{Initialization: capiv1.ClusterInitializationStatus{InfrastructureProvisioned: ptr.To(true)}},
+			Status:     capiv1.ClusterStatus{Initialization: capiv1.ClusterInitializationStatus{InfrastructureProvisioned: new(true)}},
 		},
 		&capiv1.Machine{
 			ObjectMeta: metav1.ObjectMeta{Name: owner, Namespace: testNamespace, UID: "owner-uid"},
