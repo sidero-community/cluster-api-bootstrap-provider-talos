@@ -20,6 +20,14 @@ Kubernetes 1.37 for management and workload clusters. Kubernetes 1.37 workload
 clusters need CAPI core v1.14.1 or later on the management cluster.
 """
 
+[notes.talosconfig]
+    title = "TalosConfig status.talosConfig removed"
+    description = """\
+TalosConfig no longer reports a talosconfig in `status.talosConfig`; the field is not part of the
+`v1beta1` API and stays empty when read through `v1alpha3`.
+Use the cluster-wide `<cluster-name>-talosconfig` secret instead (key `talosconfig`).
+"""
+
 [notes.Talos]
     title = "Talos 1.14"
     description = """\

@@ -24,7 +24,7 @@ func (src *TalosConfig) ConvertTo(dstRaw conversion.Hub) error {
 	// Restore the Hub-only fields that ConvertFrom stashed on the way down.
 	restored := &bsv1beta1.TalosConfig{}
 	ok, err := utilconversion.UnmarshalData(src, restored)
-	if err != nil || !ok {
+	if err != nil {
 		return err
 	}
 
@@ -51,7 +51,8 @@ func (dst *TalosConfig) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	// Stash the Hub-only fields this version cannot hold, so ConvertTo can restore them.
-	if err := utilconversion.MarshalData(src, dst); err != nil {
+	// The hub object is not used after this point, so the no-copy variant is safe.
+	if err := utilconversion.MarshalDataUnsafeNoCopy(src, dst); err != nil {
 		return err
 	}
 
@@ -142,6 +143,11 @@ func Convert_v1beta1_TalosConfigStatus_To_v1alpha3_TalosConfigStatus(in *bsv1bet
 
 	// The generated conversion derives the old-shape conditions from the v1beta2 ones; the
 	// failure fields have no v1beta2 source and stay empty.
+
+	// Do not convert an unset DataSecretName into a pointer to an empty string.
+	if in.DataSecretName == "" {
+		out.DataSecretName = nil
+	}
 
 	// Move initialization to old fields
 	out.Ready = ptr.Deref(in.Initialization.DataSecretCreated, false)

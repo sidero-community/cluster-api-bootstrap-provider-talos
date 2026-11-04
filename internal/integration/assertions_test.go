@@ -17,7 +17,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/validation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	capiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -134,7 +134,7 @@ func assertCompatibleMachineConfigs(ctx context.Context, t *testing.T, c client.
 		func(p machineconfig.Provider) any { return p.K8sClusterConfig().ClusterEndpoint().String() },
 		func(p machineconfig.Provider) any { return p.Cluster().Token().ID() },
 		func(p machineconfig.Provider) any { return p.Cluster().Token().Secret() },
-		func(p machineconfig.Provider) any { return p.K8sAPIServerCAConfig().IssuingCA().Crt },
+		func(p machineconfig.Provider) any { return p.K8sAPIServerCAConfig().AcceptedCAs() },
 	}
 
 	for _, check := range checks {

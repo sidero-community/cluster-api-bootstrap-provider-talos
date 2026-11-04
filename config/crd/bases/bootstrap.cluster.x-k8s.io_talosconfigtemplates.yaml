@@ -97,8 +97,6 @@ spec:
         type: object
     served: true
     storage: false
-    subresources:
-      status: {}
   - additionalPrinterColumns:
     - description: Name of the ClusterClass owning this template
       jsonPath: .metadata.ownerReferences[?(@.kind=="ClusterClass")].name
@@ -278,5 +276,4 @@ spec:
         type: object
     served: true
     storage: true
-    subresources:
-      status: {}
+    subresources: {}

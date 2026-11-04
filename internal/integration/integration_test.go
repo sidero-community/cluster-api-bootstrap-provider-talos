@@ -19,6 +19,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/generate"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	talosmachine "github.com/siderolabs/talos/pkg/machinery/config/machine"
+	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -146,41 +147,47 @@ func TestIntegration(t *testing.T) {
 	t.Run("ClusterSpec", func(t *testing.T) {
 		t.Parallel()
 
-		namespaceName := setupTest(ctx, t, c)
-		cluster := createCluster(ctx, t, c, namespaceName, &capiv1.ClusterSpec{
-			ClusterNetwork: capiv1.ClusterNetwork{
-				Services: capiv1.NetworkRanges{
-					CIDRBlocks: []string{
-						"192.168.0.0/16",
-						"fdaa:bbbb:cccc:15::/64",
-					},
-				},
-				Pods: capiv1.NetworkRanges{
-					CIDRBlocks: []string{
-						"10.0.0.0/16",
-						"fdbb:bbbb:cccc:15::/64",
-					},
-				},
-				ServiceDomain: "mycluster.local",
-			},
-			ControlPlaneEndpoint: capiv1.APIEndpoint{
-				Host: "example.com",
-				Port: 443,
-			},
-		})
-		talosConfig := createTalosConfig(ctx, t, c, namespaceName, bootstrapv1beta1.TalosConfigSpec{
-			GenerateType: talosmachine.TypeInit.String(),
-			TalosVersion: TalosVersion,
-		})
-		createMachine(ctx, t, c, cluster, talosConfig, true)
-		waitForReady(ctx, t, c, talosConfig)
+		for _, talosVersion := range []string{TalosVersion, "v1.13"} {
+			t.Run(talosVersion, func(t *testing.T) {
+				t.Parallel()
 
-		provider := assertMachineConfiguration(ctx, t, c, talosConfig)
+				namespaceName := setupTest(ctx, t, c)
+				cluster := createCluster(ctx, t, c, namespaceName, &capiv1.ClusterSpec{
+					ClusterNetwork: capiv1.ClusterNetwork{
+						Services: capiv1.NetworkRanges{
+							CIDRBlocks: []string{
+								"192.168.0.0/16",
+								"fdaa:bbbb:cccc:15::/108",
+							},
+						},
+						Pods: capiv1.NetworkRanges{
+							CIDRBlocks: []string{
+								"10.0.0.0/16",
+								"fdbb:bbbb:cccc:15::/64",
+							},
+						},
+						ServiceDomain: "mycluster.local",
+					},
+					ControlPlaneEndpoint: capiv1.APIEndpoint{
+						Host: "example.com",
+						Port: 443,
+					},
+				})
+				talosConfig := createTalosConfig(ctx, t, c, namespaceName, bootstrapv1beta1.TalosConfigSpec{
+					GenerateType: talosmachine.TypeInit.String(),
+					TalosVersion: talosVersion,
+				})
+				createMachine(ctx, t, c, cluster, talosConfig, true)
+				waitForReady(ctx, t, c, talosConfig)
 
-		assert.Equal(t, "https://example.com:443", provider.K8sClusterConfig().ClusterEndpoint().String())
-		assert.Equal(t, "mycluster.local", provider.K8sNetworkConfig().DNSDomain())
-		assert.Equal(t, "10.0.0.0/16,fdbb:bbbb:cccc:15::/64", strings.Join(xslices.Map(provider.K8sNetworkConfig().PodCIDRs(), netip.Prefix.String), ","))
-		assert.Equal(t, "192.168.0.0/16,fdaa:bbbb:cccc:15::/64", strings.Join(xslices.Map(provider.K8sNetworkConfig().ServiceCIDRs(), netip.Prefix.String), ","))
+				provider := assertMachineConfiguration(ctx, t, c, talosConfig)
+
+				assert.Equal(t, "https://example.com:443", provider.K8sClusterConfig().ClusterEndpoint().String())
+				assert.Equal(t, "mycluster.local", provider.K8sNetworkConfig().DNSDomain())
+				assert.Equal(t, "10.0.0.0/16,fdbb:bbbb:cccc:15::/64", strings.Join(xslices.Map(provider.K8sNetworkConfig().PodCIDRs(), netip.Prefix.String), ","))
+				assert.Equal(t, "192.168.0.0/16,fdaa:bbbb:cccc:15::/108", strings.Join(xslices.Map(provider.K8sNetworkConfig().ServiceCIDRs(), netip.Prefix.String), ","))
+			})
+		}
 	})
 
 	t.Run("StrategicMergePatch", func(t *testing.T) {
@@ -217,7 +224,7 @@ func TestIntegration(t *testing.T) {
 			GenerateType: talosmachine.TypeInit.String(),
 			TalosVersion: TalosVersion,
 			StrategicPatches: []string{
-				"cluster:\n  apiServer:\n    admissionControl:\n      - name: PodSecurity\n        $patch: delete\n",
+				"apiVersion: v1alpha1\nkind: KubeAdmissionControlConfig\nname: PodSecurity\n$patch: delete\n",
 			},
 		})
 
@@ -277,7 +284,7 @@ func TestIntegration(t *testing.T) {
 		secretsBundle, err := secrets.NewBundle(secrets.NewFixedClock(time.Now()), config.TalosVersionCurrent)
 		require.NoError(t, err)
 
-		input, err := generate.NewInput(cluster.Name, "https://example.com:6443/", "v1.22.2", generate.WithSecretsBundle(secretsBundle))
+		input, err := generate.NewInput(cluster.Name, "https://example.com:6443/", constants.DefaultKubernetesVersion, generate.WithSecretsBundle(secretsBundle))
 		require.NoError(t, err)
 
 		workers := []*bootstrapv1beta1.TalosConfig{}

@@ -5,7 +5,6 @@
 package controllers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,23 +13,19 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/Masterminds/semver/v3"
 	jsonpatch "github.com/evanphx/json-patch"
 	"github.com/go-logr/logr"
-	"github.com/siderolabs/go-pointer"
 	"github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
 	"github.com/siderolabs/talos/pkg/machinery/config/encoder"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
+	"github.com/siderolabs/talos/pkg/machinery/config/generate/stdpatches"
 	"github.com/siderolabs/talos/pkg/machinery/config/machine"
-	"github.com/siderolabs/talos/pkg/machinery/config/types/network"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
-	"github.com/siderolabs/talos/pkg/machinery/nethelpers"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -96,7 +91,6 @@ type TalosConfigScope struct {
 
 type TalosConfigBundle struct {
 	BootstrapData string
-	TalosConfig   string
 }
 
 func (r *TalosConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -139,9 +133,11 @@ func (r *TalosConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=talosconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=talosconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=talosconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status;machines/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools;machinepools/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=runtime.cluster.x-k8s.io,resources=extensionconfigs,verbs=get;list;watch;create;update;patch
 
@@ -168,13 +164,23 @@ func (r *TalosConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Always attempt to Patch the TalosConfig object and status after each reconciliation.
 	defer func() {
-		// always update the readyCondition; the summary is represented using the "1 of x completed" notation.
-		conditions.SetSummaryCondition(config, config, bootstrapv1beta1.DataSecretAvailableCondition)
+		// always update the readyCondition, summarizing the DataSecretAvailable condition.
+		// ClientConfigAvailable is excluded on purpose: the cluster-wide talosconfig is not needed to bootstrap
+		// a Machine, and Cluster API mirrors this condition into the Machine's BootstrapConfigReady condition.
+		if err := conditions.SetSummaryCondition(config, config, bootstrapv1beta1.TalosConfigReadyCondition,
+			conditions.ForConditionTypes{
+				bootstrapv1beta1.DataSecretAvailableCondition,
+			},
+		); err != nil {
+			rerr = errors.Join(rerr, err)
+		}
 
 		patchOpts := []patch.Option{
 			patch.WithOwnedConditions{
 				Conditions: []string{
+					bootstrapv1beta1.TalosConfigReadyCondition,
 					bootstrapv1beta1.DataSecretAvailableCondition,
+					bootstrapv1beta1.ClientConfigAvailableCondition,
 					bootstrapv1beta1.ImageFactoryResolvedCondition,
 				},
 			},
@@ -567,22 +573,6 @@ func (r *TalosConfigReconciler) userConfigs(ctx context.Context, scope *TalosCon
 
 	retBundle.BootstrapData = userConfigStr
 
-	if userConfig.Machine().Security().IssuingCA() != nil && len(userConfig.Machine().Security().IssuingCA().Crt) > 0 && len(userConfig.Machine().Security().IssuingCA().Key) > 0 {
-		var clusterName string
-		if kubeCluster := userConfig.K8sClusterConfig(); kubeCluster != nil {
-			clusterName = kubeCluster.ClusterName()
-		}
-
-		bundle, err := secrets.NewBundleFromConfig(secrets.NewFixedClock(time.Now()), userConfig)
-		if err == nil {
-			retBundle.TalosConfig, err = genTalosConfigFile(clusterName, bundle, nil)
-		}
-
-		if err != nil {
-			r.Log.Error(err, "failed generating talosconfig for user-supplied machine configuration")
-		}
-	}
-
 	return retBundle, nil
 }
 
@@ -635,7 +625,7 @@ func renderedConfigHash(scope *TalosConfigScope, installerImage string) (string,
 	return bootstrapv1beta1.InPlaceConfigHash(scope.Config.Spec, k8sVersion, installerImage)
 }
 
-// genConfigs will generate a bootstrap config and a talosconfig to return
+// genConfigs will generate a bootstrap config to return
 func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConfigScope) (*TalosConfigBundle, []string, error) {
 	retBundle := &TalosConfigBundle{}
 
@@ -695,13 +685,6 @@ func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConf
 		return retBundle, patches, err
 	}
 
-	tcString, err := genTalosConfigFile(input.ClusterName, secretBundle, nil)
-	if err != nil {
-		return retBundle, patches, err
-	}
-
-	retBundle.TalosConfig = tcString
-
 	// The Cluster's CIDRs go in through the generator input: depending on the version contract
 	// they end up in the legacy v1alpha1 cluster network block or in a KubeNetworkConfig
 	// document, and only the generator knows which.
@@ -723,18 +706,20 @@ func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConf
 	}
 
 	if hostname != "" {
-		hostnamePatch, err := hostnamePatch(scope.Config.Spec.TalosVersion, hostname)
+		hostnamePatch, err := stdpatches.WithStaticHostname(versionContract, hostname)
 		if err != nil {
 			return retBundle, patches, err
 		}
 
-		patches = append(patches, hostnamePatch)
+		patches = append(patches, string(hostnamePatch))
 	}
 
 	dataOut, err := data.EncodeString(encoder.WithComments(encoder.CommentsDisabled))
 	if err != nil {
 		return retBundle, patches, err
 	}
+
+	r.Log.Info("patches are", "patches", patches)
 
 	retBundle.BootstrapData = dataOut
 
@@ -842,52 +827,4 @@ func hostnameFor(scope *TalosConfigScope) (string, error) {
 	default:
 		return "", nil
 	}
-}
-
-// hostnameDocumentMinimum is the first Talos that reads a HostnameConfig document.
-var hostnameDocumentMinimum = semver.MustParse("1.12.0-beta.0")
-
-// hostnamePatch renders the hostname the way the target Talos reads it: a HostnameConfig
-// document from Talos 1.12 on, the legacy machine.network.hostname field before that.
-//
-// The document is mandatory where the generator emits one, which includes an unset
-// talosVersion (the current Talos): a HostnameConfig document takes precedence over the legacy
-// field, so setting only the field would leave the generator's automatic hostname in charge.
-func hostnamePatch(talosVersion, hostname string) (string, error) {
-	if talosVersion != "" {
-		version, err := semver.NewVersion(strings.TrimLeft(talosVersion, "v"))
-		if err == nil && version.LessThan(hostnameDocumentMinimum) {
-			return legacyHostnamePatch(hostname)
-		}
-	}
-
-	return newHostnameConfig(hostname)
-}
-
-// legacyHostnamePatch is a strategic merge patch on the v1alpha1 machine.network.hostname
-// field, for Talos versions that predate the HostnameConfig document.
-func legacyHostnamePatch(hostname string) (string, error) {
-	buf := new(bytes.Buffer)
-
-	err := yaml.NewEncoder(buf).Encode(map[string]any{
-		"machine": map[string]any{
-			"network": map[string]any{
-				"hostname": hostname,
-			},
-		},
-	})
-
-	return buf.String(), err
-}
-
-func newHostnameConfig(hostname string) (string, error) {
-	hostnameConfig := network.NewHostnameConfigV1Alpha1()
-	hostnameConfig.ConfigAuto = pointer.To(nethelpers.AutoHostnameKindOff)
-	hostnameConfig.ConfigHostname = hostname
-
-	buf := new(bytes.Buffer)
-
-	err := yaml.NewEncoder(buf).Encode(hostnameConfig)
-
-	return buf.String(), err
 }
