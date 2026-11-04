@@ -43,10 +43,14 @@ jobs:
             TAG=${{ github.ref_name }}
       - name: release-manifests
         run: make release-manifests TAG=${{ github.ref_name }}
+      # Renders hack/release.toml with the Sidero release tool, so the release carries the
+      # curated notes rather than GitHub's generated changelog link.
+      - name: release-notes
+        run: make release-notes TAG=${{ github.ref_name }}
       - name: release
         uses: softprops/action-gh-release@v3
         with:
           files: _out/bootstrap-talos/${{ github.ref_name }}/*
-          generate_release_notes: true
+          body_path: _out/RELEASE_NOTES.md
           draft: false
           prerelease: false

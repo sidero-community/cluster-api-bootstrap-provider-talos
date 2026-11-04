@@ -2,7 +2,7 @@
 commit = "HEAD"
 
 project_name = "CAPI Bootstrap Provider Talos"
-github_repo = "siderolabs/cluster-api-bootstrap-provider-talos"
+github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
