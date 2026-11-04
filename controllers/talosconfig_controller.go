@@ -719,8 +719,6 @@ func (r *TalosConfigReconciler) genConfigs(ctx context.Context, scope *TalosConf
 		return retBundle, patches, err
 	}
 
-	r.Log.Info("patches are", "patches", patches)
-
 	retBundle.BootstrapData = dataOut
 
 	return retBundle, patches, nil
