@@ -14,11 +14,13 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
+	"sigs.k8s.io/cluster-api/util"
 
 	bootstrapv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 )
@@ -31,6 +33,10 @@ const (
 	// waitForRebootSeconds is how long to wait for a node to come back after a change that
 	// Talos decided needed a reboot, or after an upgrade.
 	waitForRebootSeconds = 30
+
+	// deletionPollInterval is how often a running Talos upgrade checks whether its Machine is
+	// being deleted.
+	deletionPollInterval = 15 * time.Second
 )
 
 // DoUpdateMachine performs the in-place update of a single machine.
@@ -38,6 +44,10 @@ const (
 // Cluster API calls this repeatedly until it reports completion, so every step observes the
 // node's actual state and acts only on a difference. Returning Success with a non-zero
 // RetryAfterSeconds means "still working"; Success with zero means done.
+//
+// On a control plane machine, done also means that the node's kube-apiserver has absorbed the
+// configuration: Talos restarts it on its own when the configuration changes what it runs with,
+// and the owner must not move on to the next machine before it is back.
 func (h *Handler) DoUpdateMachine(ctx context.Context, req *runtimehooksv1.UpdateMachineRequest, resp *runtimehooksv1.UpdateMachineResponse) {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -117,6 +127,35 @@ func (h *Handler) DoUpdateMachine(ctx context.Context, req *runtimehooksv1.Updat
 		return
 	}
 
+	machineKey := types.NamespacedName{Namespace: machine.Namespace, Name: machine.Name}
+	controlPlane := util.IsControlPlaneMachine(&machine)
+	hash := configHash(desiredConfig)
+
+	// On a control plane machine the kube-apiserver is observed before the configuration goes
+	// on, so that a restart Talos makes for it can be told from the pod that ran before.
+	var (
+		record  applyRecord
+		tracked bool
+		before  APIServerState
+	)
+
+	if controlPlane {
+		record, tracked = h.applies.get(machineKey, hash)
+
+		if !tracked {
+			before, err = node.APIServer(ctx)
+			if err != nil {
+				log.Info("cannot observe kube-apiserver, will retry", "error", err.Error())
+
+				resp.Status = runtimehooksv1.ResponseStatusSuccess
+				resp.Message = "waiting for the node to report its kube-apiserver"
+				resp.RetryAfterSeconds = waitForRebootSeconds
+
+				return
+			}
+		}
+	}
+
 	// Apply the configuration first so that the node has the desired installer image
 	// recorded before any upgrade is triggered, and so config-only changes settle without a
 	// reboot wherever Talos allows it.
@@ -126,7 +165,9 @@ func (h *Handler) DoUpdateMachine(ctx context.Context, req *runtimehooksv1.Updat
 		return
 	}
 
-	machineKey := types.NamespacedName{Namespace: machine.Namespace, Name: machine.Name}
+	if controlPlane && !tracked {
+		record = h.applies.record(machineKey, hash, before)
+	}
 
 	if needsUpgrade(desiredImage, runningVersion) {
 		h.continueUpgrade(ctx, log, resp, node, upgradeTarget{
@@ -138,6 +179,31 @@ func (h *Handler) DoUpdateMachine(ctx context.Context, req *runtimehooksv1.Updat
 		})
 
 		return
+	}
+
+	if controlPlane {
+		observed, err := node.APIServer(ctx)
+		if err != nil {
+			log.Info("cannot observe kube-apiserver, will retry", "error", err.Error())
+
+			resp.Status = runtimehooksv1.ResponseStatusSuccess
+			resp.Message = "waiting for the node to report its kube-apiserver"
+			resp.RetryAfterSeconds = waitForRebootSeconds
+
+			return
+		}
+
+		if settled, reason := apiServerSettled(record.before, observed, record.appliedAt, h.applies.now()); !settled {
+			log.Info(reason)
+
+			resp.Status = runtimehooksv1.ResponseStatusSuccess
+			resp.Message = reason
+			resp.RetryAfterSeconds = waitForConfigSeconds
+
+			return
+		}
+
+		h.applies.forget(machineKey)
 	}
 
 	// The node runs the desired version, so any sequence recorded for it is over.
@@ -186,20 +252,19 @@ func (h *Handler) continueUpgrade(ctx context.Context, log logr.Logger, resp *ru
 	case !tracked:
 		log.Info("starting a lifecycle upgrade", "image", target.image, "running", target.running)
 
-		h.upgrades.start(target.machine, target.image, func() error {
-			upgradeCtx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
-			defer cancel()
+		h.upgrades.start(target.machine, target.image, func(ctx context.Context) error {
+			go h.cancelOnDeletion(ctx, target.machine)
 
 			// The request-scoped client is closed when this hook call returns; the sequence
 			// outlives it and needs a connection of its own.
-			background, err := h.newNodeClient(upgradeCtx, target.cluster, target.endpoints)
+			background, err := h.newNodeClient(ctx, target.cluster, target.endpoints)
 			if err != nil {
 				return fmt.Errorf("failed to connect for the upgrade: %w", err)
 			}
 
 			defer background.Close() //nolint:errcheck // best effort
 
-			return background.Upgrade(upgradeCtx, target.image)
+			return background.Upgrade(ctx, target.image)
 		})
 
 		respondRetry(resp, fmt.Sprintf("upgrading Talos to %s", target.image))
@@ -215,6 +280,52 @@ func (h *Handler) continueUpgrade(ctx context.Context, log logr.Logger, resp *ru
 		respondRetry(resp, fmt.Sprintf("waiting for the node to reboot into %s", target.image))
 	default:
 		respondRetry(resp, fmt.Sprintf("upgrading Talos to %s", target.image))
+	}
+}
+
+// cancelOnDeletion watches the Machine while its lifecycle upgrade runs, and cancels the
+// upgrade once the Machine is being deleted or is gone.
+//
+// Cluster API stops calling the hook for a deleting Machine, so nothing else would stop a
+// sequence that is about to reboot a node on its way out: the control plane provider needs the
+// node to answer while it removes the etcd member, and the infrastructure provider may already
+// be wiping the disk the install writes to. This is what lets the control plane provider
+// remediate a machine in the middle of its update. The poll is cheap: the Machine comes from
+// the manager's cache.
+func (h *Handler) cancelOnDeletion(ctx context.Context, key types.NamespacedName) {
+	log := ctrl.Log.WithName("inplace").WithValues("machine", key.String())
+
+	ticker := time.NewTicker(h.deletionPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		machine := &clusterv1.Machine{}
+
+		err := h.client.Get(ctx, key, machine)
+
+		switch {
+		case apierrors.IsNotFound(err):
+			log.Info("cancelling the Talos upgrade of a machine that is gone")
+		case err != nil:
+			log.Info("cannot tell whether the machine is being deleted, will retry", "error", err.Error())
+
+			continue
+		case machine.DeletionTimestamp.IsZero():
+			continue
+		default:
+			log.Info("cancelling the Talos upgrade of a machine being deleted")
+		}
+
+		h.upgrades.cancel(key)
+		h.applies.forget(key)
+
+		return
 	}
 }
 

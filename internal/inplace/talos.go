@@ -7,10 +7,14 @@ package inplace
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/cosi-project/runtime/pkg/safe"
+	"github.com/cosi-project/runtime/pkg/state"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
+	"github.com/siderolabs/talos/pkg/machinery/resources/k8s"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,6 +41,11 @@ type NodeClient interface {
 	// LegacyUpgrade asks a node that predates the lifecycle service (Talos before 1.13) to
 	// upgrade itself through the machine service, and returns as soon as it has been asked.
 	LegacyUpgrade(ctx context.Context, image string) error
+
+	// APIServer observes the node's kube-apiserver: the static pod Talos rendered for it and
+	// the kubelet's status of the pod running from it. A node without one, a worker, reports
+	// an empty state.
+	APIServer(ctx context.Context) (APIServerState, error)
 
 	// Close releases the underlying connection.
 	Close() error
@@ -132,6 +141,45 @@ func (t *talosNodeClient) LegacyUpgrade(ctx context.Context, image string) error
 	}
 
 	return nil
+}
+
+// apiServerPodPrefix starts the ID of the StaticPodStatus Talos keeps for the kube-apiserver
+// pod, which it names "<namespace>/<pod name>"; the kubelet suffixes static pod names with the
+// node name.
+const apiServerPodPrefix = "kube-system/" + apiServerContainer + "-"
+
+func (t *talosNodeClient) APIServer(ctx context.Context) (APIServerState, error) {
+	var observed APIServerState
+
+	pod, err := safe.StateGetByID[*k8s.StaticPod](ctx, t.client.COSI, k8s.APIServerID)
+	if err != nil {
+		if state.IsNotFoundError(err) {
+			return observed, nil
+		}
+
+		return observed, fmt.Errorf("failed to read the kube-apiserver static pod: %w", err)
+	}
+
+	observed.rendered = pod.Metadata().Version().String()
+
+	statuses, err := safe.StateListAll[*k8s.StaticPodStatus](ctx, t.client.COSI)
+	if err != nil {
+		return observed, fmt.Errorf("failed to list the static pod statuses: %w", err)
+	}
+
+	status, found := statuses.Find(func(s *k8s.StaticPodStatus) bool {
+		return strings.HasPrefix(s.Metadata().ID(), apiServerPodPrefix)
+	})
+	if !found {
+		return observed, nil
+	}
+
+	observed.started, observed.ready, err = apiServerPodState(status.TypedSpec().PodStatus)
+	if err != nil {
+		return APIServerState{}, err
+	}
+
+	return observed, nil
 }
 
 func (t *talosNodeClient) Close() error {

@@ -189,14 +189,34 @@ on a difference. CAPI polls it repeatedly.
    cordon and drain.
 5. Otherwise, if the config differs, call `ApplyConfiguration` in `AUTO` mode and
    let Talos decide whether a reboot is required.
-6. Poll until the node is Ready and, for control-plane machines, its etcd member
-   is healthy. Return `retryAfterSeconds: 0` when settled.
+6. On a control plane machine, wait for the node's kube-apiserver to absorb the
+   configuration. Talos restarts it itself when the configuration changes what it
+   runs with: the static pod is re-rendered and the kubelet replaces the pod on
+   its next poll, up to 20 seconds later. The extension observes the static pod
+   (its resource version, the running container's start time, the Ready
+   condition, all through Talos' resource API) before the apply, and reports
+   completion only once a re-rendered pod has been replaced by one that started
+   later and is Ready, or, when Talos left the static pod alone for a short
+   settle window, once the pod is Ready. Only the node's own observations are
+   compared, so clocks do not enter the decision. Return `retryAfterSeconds: 0`
+   when settled.
 
 ## Safety
 
 - **One control-plane machine at a time**, gated on the existing etcd health
   helpers in CACPPT's `etcd.go` and `health.go`. An in-place OS upgrade reboots
-  the node, so this is a genuine quorum concern.
+  the node, so this is a genuine quorum concern. CACPPT also holds the next
+  in-place update while a control plane component on any other machine is not
+  ready, as KCP's preflight checks hold a rollout: with the kube-apiserver wait
+  above, a configuration kube-apiserver cannot start on stops at the first
+  machine instead of rolling across the control plane.
+- **Cancellation on deletion.** Cluster API stops calling `UpdateMachine` once a
+  Machine is deleting, so a Talos upgrade running in the background watches its
+  Machine and cancels itself when the Machine is being deleted or gone, instead
+  of rebooting a node that CACPPT is removing from etcd and the infrastructure
+  provider is about to wipe. This is what lets CACPPT remediate a machine in the
+  middle of its own update. The machine-service upgrade of nodes before Talos
+  1.13 runs on the node itself and cannot be cancelled.
 - **Failures surface, they do not silently fall back.** Once `update-in-progress`
   is written CAPI is committed; a hook failure is reported as
   `MachineInPlaceUpdateFailedReason` rather than being papered over.

@@ -121,14 +121,26 @@ serving certificate and **the manager exits at startup if it is missing**. Equal
 5. The core Machine controller polls `UpdateMachine`. The extension waits for that hash to
    match the desired spec — otherwise it would apply the pre-update config and wrongly report
    success — then applies the config and, if the installer image changed, upgrades Talos.
+   On a control plane machine it then waits for the node's kube-apiserver: Talos restarts it
+   on its own when the configuration changes what it runs with, and the update is only
+   reported complete once the restarted API server is ready. A configuration kube-apiserver
+   cannot start on therefore stops at the first machine.
 6. When the extension reports completion, Cluster API clears the annotations.
 
-Control plane machines are updated **one at a time**, and only while etcd is healthy across
-the whole control plane, because an in-place upgrade reboots the node.
+Control plane machines are updated **one at a time**, only while etcd is healthy across the
+whole control plane, because an in-place upgrade reboots the node, and only while the control
+plane components on the other machines are ready.
+
+Deleting a Machine in the middle of its update cancels the Talos upgrade the extension is
+running for it: Cluster API stops calling the extension for a deleting Machine, so the
+extension watches the Machine itself. The control plane provider relies on this to remediate
+a machine that an update broke.
 
 ## Limitations
 
 - Talos OS downgrades are not supported in place.
+- A Talos upgrade driven through the machine service (nodes before Talos 1.13) runs on the
+  node itself and cannot be cancelled when the Machine is deleted.
 - Rotating an infrastructure template still rolls control plane machines: a new InfraMachine
   is required, and this provider only produces one by creating a replacement.
 - MachinePools are handled separately, by CABPT itself — see below.

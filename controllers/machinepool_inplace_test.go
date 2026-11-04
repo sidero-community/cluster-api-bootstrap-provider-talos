@@ -147,6 +147,11 @@ func (r *recordingNode) Close() error {
 	return nil
 }
 
+// APIServer is only consulted for control plane machines, which MachinePools never are.
+func (r *recordingNode) APIServer(context.Context) (inplace.APIServerState, error) {
+	return inplace.APIServerState{}, nil
+}
+
 // enableMachinePools turns on the Cluster API MachinePool feature gate, without which
 // bsutil.GetConfigOwner refuses to resolve a MachinePool owner at all.
 func enableMachinePools(t *testing.T) {

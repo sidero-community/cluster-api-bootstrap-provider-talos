@@ -5,6 +5,7 @@
 package inplace
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestUpgradeTrackerRunsTheSequenceOnceAndRecordsTheOutcome(t *testing.T) {
 	tracker := newUpgradeTracker()
 	done := make(chan struct{})
 
-	tracker.start(trackerKey, "img", func() error {
+	tracker.start(trackerKey, "img", func(context.Context) error {
 		<-done
 
 		return errors.New("install exited with code 1")
@@ -48,6 +49,35 @@ func TestUpgradeTrackerRunsTheSequenceOnceAndRecordsTheOutcome(t *testing.T) {
 	tracker.forget(trackerKey)
 	_, ok = tracker.get(trackerKey)
 	assert.False(t, ok)
+}
+
+// A cancelled sequence sees its context end, so that a blocked install stream or reboot call
+// returns, and is forgotten at once rather than reported on.
+func TestUpgradeTrackerCancelEndsTheSequence(t *testing.T) {
+	t.Parallel()
+
+	tracker := newUpgradeTracker()
+	ended := make(chan error, 1)
+
+	tracker.start(trackerKey, "img", func(ctx context.Context) error {
+		<-ctx.Done()
+		ended <- ctx.Err()
+
+		return ctx.Err()
+	})
+
+	assert.True(t, tracker.cancel(trackerKey))
+
+	select {
+	case err := <-ended:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("the sequence did not see the cancellation")
+	}
+
+	_, ok := tracker.get(trackerKey)
+	assert.False(t, ok)
+	assert.False(t, tracker.cancel(trackerKey), "nothing left to cancel")
 }
 
 func TestLifecycleUpgradeSupported(t *testing.T) {

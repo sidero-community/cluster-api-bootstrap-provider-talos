@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
+	github.com/cosi-project/runtime v1.16.3
 	github.com/evanphx/json-patch v5.9.11+incompatible
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
@@ -48,7 +49,6 @@ require (
 	github.com/cloudflare/circl v1.6.4 // indirect
 	github.com/containerd/go-cni v1.1.13 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
-	github.com/cosi-project/runtime v1.16.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/drone/envsubst/v2 v2.0.0-20210730161058-179042472c46 // indirect

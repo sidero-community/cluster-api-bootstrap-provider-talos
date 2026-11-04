@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,6 +29,11 @@ type Handler struct {
 	client        client.Client
 	newNodeClient NodeClientFactory
 	upgrades      *upgradeTracker
+	applies       *applyTracker
+
+	// deletionPollInterval is how often a running Talos upgrade checks whether its Machine is
+	// being deleted.
+	deletionPollInterval time.Duration
 }
 
 // NewHandler builds a Handler backed by the management cluster client c, opening Talos
@@ -38,6 +44,9 @@ func NewHandler(c client.Client, factory NodeClientFactory) *Handler {
 		client:        c,
 		newNodeClient: factory,
 		upgrades:      newUpgradeTracker(),
+		applies:       newApplyTracker(),
+
+		deletionPollInterval: deletionPollInterval,
 	}
 }
 

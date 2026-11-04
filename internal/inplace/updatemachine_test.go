@@ -65,6 +65,15 @@ type fakeNode struct {
 
 	versionErr error
 	upgradeErr error
+
+	// blockUpgrades makes Upgrade wait for its context to end, as a real install stream
+	// would, and record why it ended.
+	blockUpgrades bool
+	upgradeCtxErr error
+
+	apiServer      APIServerState
+	apiServerErr   error
+	apiServerCalls int
 }
 
 func (f *fakeNode) Version(context.Context) (string, error) {
@@ -95,13 +104,50 @@ func (f *fakeNode) ApplyConfig(_ context.Context, data []byte) error {
 	return nil
 }
 
-func (f *fakeNode) Upgrade(_ context.Context, image string) error {
+func (f *fakeNode) Upgrade(ctx context.Context, image string) error {
+	f.mu.Lock()
+	f.upgrades = append(f.upgrades, image)
+	block := f.blockUpgrades
+	f.mu.Unlock()
+
+	if block {
+		<-ctx.Done()
+
+		f.mu.Lock()
+		f.upgradeCtxErr = ctx.Err()
+		f.mu.Unlock()
+
+		return ctx.Err()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	f.upgrades = append(f.upgrades, image)
-
 	return f.upgradeErr
+}
+
+// upgradeContextError returns why a blocked upgrade's context ended, if it has.
+func (f *fakeNode) upgradeContextError() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.upgradeCtxErr
+}
+
+func (f *fakeNode) APIServer(context.Context) (APIServerState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.apiServerCalls++
+
+	return f.apiServer, f.apiServerErr
+}
+
+func (f *fakeNode) setAPIServer(state APIServerState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.apiServer = state
 }
 
 func (f *fakeNode) LegacyUpgrade(_ context.Context, image string) error {
@@ -194,6 +240,23 @@ func newUpdateFixture(t *testing.T, runningVersion, configImage, secretHash, res
 	}
 }
 
+// markControlPlane labels the fixture's Machine as a control plane machine, which is what makes
+// the handler wait for its kube-apiserver.
+func (f *updateFixture) markControlPlane() {
+	f.request.Desired.Machine.Labels = map[string]string{clusterv1.MachineControlPlaneLabel: ""}
+}
+
+// update runs one UpdateMachine call and returns the response.
+func (f *updateFixture) update(t *testing.T) *runtimehooksv1.UpdateMachineResponse {
+	t.Helper()
+
+	resp := &runtimehooksv1.UpdateMachineResponse{}
+	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
+	require.Equal(t, runtimehooksv1.ResponseStatusSuccess, resp.Status, resp.Message)
+
+	return resp
+}
+
 // freshHash is the hash CABPT would stamp on a secret regenerated for the fixture's desired
 // spec and Kubernetes version.
 func freshHash(t *testing.T) string {
@@ -238,6 +301,108 @@ func TestUpdateMachine_AppliesConfigWhenFresh(t *testing.T) {
 	assert.Len(t, f.node.applied, 1)
 	assert.Empty(t, f.node.upgrades, "running version already matches the desired image")
 	assert.Zero(t, resp.RetryAfterSeconds, "config-only change should complete")
+	assert.Zero(t, f.node.apiServerCalls, "a worker has no kube-apiserver to wait for")
+}
+
+// Talos restarts kube-apiserver itself when the configuration changes what it runs with. The
+// update is only complete once the kubelet has replaced the pod and the new one is ready;
+// reporting it earlier would let the owner move on with this node's API server still down.
+func TestUpdateMachine_WaitsForTheAPIServerOnAControlPlaneMachine(t *testing.T) {
+	t.Parallel()
+
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
+	f.markControlPlane()
+
+	start := time.Now()
+	f.handler.applies.now = func() time.Time { return start }
+	f.node.setAPIServer(APIServerState{rendered: "3", started: start.Add(-time.Hour), ready: true})
+
+	// Applied; Talos has not reacted yet.
+	resp := f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds)
+	assert.Contains(t, resp.Message, "settle")
+	assert.Len(t, f.node.applied, 1)
+
+	// Talos re-rendered the static pod, the kubelet has not replaced the pod yet.
+	f.node.setAPIServer(APIServerState{rendered: "4", started: start.Add(-time.Hour), ready: true})
+	resp = f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds)
+	assert.Contains(t, resp.Message, "restart kube-apiserver")
+
+	// Replaced, still starting.
+	f.node.setAPIServer(APIServerState{rendered: "4", started: start.Add(5 * time.Second), ready: false})
+	resp = f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds)
+	assert.Contains(t, resp.Message, "become ready")
+
+	// Ready on the new configuration.
+	f.node.setAPIServer(APIServerState{rendered: "4", started: start.Add(5 * time.Second), ready: true})
+	resp = f.update(t)
+	assert.Zero(t, resp.RetryAfterSeconds)
+
+	_, tracked := f.handler.applies.get(types.NamespacedName{Namespace: "default", Name: "machine-1"}, configHash(f.node.applied[0]))
+	assert.False(t, tracked, "a settled apply is forgotten")
+}
+
+// A change that does not touch kube-apiserver leaves the static pod alone: once Talos had time to
+// react, a ready API server is all that is required.
+func TestUpdateMachine_SettlesWhenTheChangeLeavesTheAPIServerAlone(t *testing.T) {
+	t.Parallel()
+
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
+	f.markControlPlane()
+
+	clock := time.Now()
+	f.handler.applies.now = func() time.Time { return clock }
+	f.node.setAPIServer(APIServerState{rendered: "3", started: clock.Add(-time.Hour), ready: false})
+
+	resp := f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds)
+	assert.Contains(t, resp.Message, "settle")
+
+	clock = clock.Add(apiServerSettleWindow)
+
+	resp = f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds, "the API server is not ready")
+	assert.Contains(t, resp.Message, "become ready")
+
+	f.node.setAPIServer(APIServerState{rendered: "3", started: clock.Add(-time.Hour), ready: true})
+
+	resp = f.update(t)
+	assert.Zero(t, resp.RetryAfterSeconds)
+	assert.Len(t, f.node.applied, 3, "the configuration is re-applied on every call, a no-op on the node")
+}
+
+// Cluster API stops calling the hook once the Machine is deleting, so the extension has to notice
+// the deletion itself and stop a Talos upgrade that would otherwise reboot the node on its way out.
+func TestUpdateMachine_CancelsTheUpgradeOfAMachineBeingDeleted(t *testing.T) {
+	t.Parallel()
+
+	f := newUpdateFixture(t, "v1.13.0", "factory.talos.dev/metal-installer/abc:v1.14.0", freshHash(t), "")
+	f.node.blockUpgrades = true
+	f.handler.deletionPollInterval = 10 * time.Millisecond
+
+	resp := f.update(t)
+	assert.Positive(t, resp.RetryAfterSeconds)
+
+	require.Eventually(t, func() bool { return len(f.node.upgradesSeen()) == 1 }, time.Second, 10*time.Millisecond)
+
+	// A Machine carries finalizers, so its deletion only stamps a timestamp at first.
+	key := types.NamespacedName{Namespace: "default", Name: "machine-1"}
+	live := &clusterv1.Machine{}
+	require.NoError(t, f.handler.client.Get(context.Background(), key, live))
+	live.Finalizers = []string{"test.example/hold"}
+	require.NoError(t, f.handler.client.Update(context.Background(), live))
+	require.NoError(t, f.handler.client.Delete(context.Background(), live))
+
+	require.Eventually(t, func() bool {
+		_, tracked := f.handler.upgrades.get(key)
+
+		return !tracked
+	}, 2*time.Second, 10*time.Millisecond, "the upgrade must be cancelled and forgotten")
+
+	require.Eventually(t, func() bool { return f.node.upgradeContextError() != nil }, time.Second, 10*time.Millisecond)
+	assert.ErrorIs(t, f.node.upgradeContextError(), context.Canceled)
 }
 
 func TestUpdateMachine_UsesTheMachineServiceUpgradeOnNodesBefore113(t *testing.T) {

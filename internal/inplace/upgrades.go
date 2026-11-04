@@ -5,6 +5,7 @@
 package inplace
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ type upgrade struct {
 	started time.Time
 	done    bool
 	err     error
+	cancel  context.CancelFunc
 }
 
 // upgradeTracker follows the lifecycle upgrades the hook has started, so that each hook call
@@ -53,9 +55,10 @@ func newUpgradeTracker() *upgradeTracker {
 	return &upgradeTracker{upgrades: map[types.NamespacedName]*upgrade{}, now: time.Now}
 }
 
-// start records a sequence for key and runs it in the background; its outcome is kept for the
-// next look. A sequence already recorded for key is left alone.
-func (t *upgradeTracker) start(key types.NamespacedName, image string, run func() error) {
+// start records a sequence for key and runs it in the background, under a context that
+// upgradeTimeout bounds and cancel ends; its outcome is kept for the next look. A sequence
+// already recorded for key is left alone.
+func (t *upgradeTracker) start(key types.NamespacedName, image string, run func(ctx context.Context) error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -63,11 +66,15 @@ func (t *upgradeTracker) start(key types.NamespacedName, image string, run func(
 		return
 	}
 
-	entry := &upgrade{image: image, started: t.now()}
+	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
+
+	entry := &upgrade{image: image, started: t.now(), cancel: cancel}
 	t.upgrades[key] = entry
 
 	go func() {
-		err := run()
+		err := run(ctx)
+
+		cancel()
 
 		t.mu.Lock()
 		defer t.mu.Unlock()
@@ -75,6 +82,23 @@ func (t *upgradeTracker) start(key types.NamespacedName, image string, run func(
 		entry.done = true
 		entry.err = err
 	}()
+}
+
+// cancel ends the sequence recorded for key, in flight or not, and forgets it. It reports
+// whether there was one.
+func (t *upgradeTracker) cancel(key types.NamespacedName) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	entry, ok := t.upgrades[key]
+	if !ok {
+		return false
+	}
+
+	entry.cancel()
+	delete(t.upgrades, key)
+
+	return true
 }
 
 // get returns a snapshot of the sequence recorded for key.
@@ -90,10 +114,7 @@ func (t *upgradeTracker) get(key types.NamespacedName) (upgrade, bool) {
 	return *entry, true
 }
 
-// forget drops the sequence recorded for key.
+// forget drops the sequence recorded for key, releasing what it holds.
 func (t *upgradeTracker) forget(key types.NamespacedName) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	delete(t.upgrades, key)
+	t.cancel(key)
 }
