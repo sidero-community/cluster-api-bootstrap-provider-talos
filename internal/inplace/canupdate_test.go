@@ -327,3 +327,93 @@ func TestCanUpdateMachineSet_UsesTemplateSpecPaths(t *testing.T) {
 	require.Equal(t, runtimehooksv1.ResponseStatusSuccess, resp.Status, resp.Message)
 	assertCovers(t, current, desired, resp.BootstrapConfigTemplatePatch)
 }
+
+// tinkerbellMachineTemplate builds a TinkerbellMachineTemplate as it arrives on the wire.
+func tinkerbellMachineTemplate(kind string, spec map[string]any) runtime.RawExtension {
+	return rawObject(map[string]any{
+		"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta2",
+		"kind":       kind,
+		"spec":       map[string]any{"template": map[string]any{"spec": spec}},
+	})
+}
+
+// A MachineSet carries an InfraMachineTemplate, whose kind is the machine kind with a
+// Template suffix. The allowlist is keyed by the machine kind, so the template must be
+// mapped to it, or every infrastructure change on a MachineSet falls back to a rollout.
+func TestCanUpdateMachineSet_InfrastructureMachineTemplate(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name     string
+		kind     string
+		current  map[string]any
+		desired  map[string]any
+		declines bool
+	}{
+		{
+			name:    "tink template change is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"templateInline": "old", "bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired: map[string]any{"templateInline": "new", "bootOptions": map[string]any{"bootMode": "isoboot"}},
+		},
+		{
+			name:    "hardware affinity change is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"hardwareAffinity": map[string]any{"required": []any{"a"}}},
+			desired: map[string]any{"hardwareAffinity": map[string]any{"required": []any{"b"}}},
+		},
+		{
+			name:     "boot mode change is declined",
+			kind:     "TinkerbellMachineTemplate",
+			current:  map[string]any{"bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired:  map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
+			declines: true,
+		},
+		{
+			name:     "tink template change alongside boot mode change is declined",
+			kind:     "TinkerbellMachineTemplate",
+			current:  map[string]any{"templateInline": "old", "bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired:  map[string]any{"templateInline": "new", "bootOptions": map[string]any{"bootMode": "netboot"}},
+			declines: true,
+		},
+		{
+			name:     "unknown provider template is declined",
+			kind:     "DockerMachineTemplate",
+			current:  map[string]any{"customImage": "old"},
+			desired:  map[string]any{"customImage": "new"},
+			declines: true,
+		},
+		{
+			// Only a template kind names a machine kind; a machine kind handed over where a
+			// template belongs is not something the allowlist can vouch for.
+			name:     "machine kind in place of a template is declined",
+			kind:     "TinkerbellMachine",
+			current:  map[string]any{"templateInline": "old"},
+			desired:  map[string]any{"templateInline": "new"},
+			declines: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			current := tinkerbellMachineTemplate(tt.kind, tt.current)
+			desired := tinkerbellMachineTemplate(tt.kind, tt.desired)
+
+			h := &Handler{}
+			resp := &runtimehooksv1.CanUpdateMachineSetResponse{}
+
+			h.DoCanUpdateMachineSet(context.Background(), &runtimehooksv1.CanUpdateMachineSetRequest{
+				Current: runtimehooksv1.CanUpdateMachineSetRequestObjects{InfrastructureMachineTemplate: current},
+				Desired: runtimehooksv1.CanUpdateMachineSetRequestObjects{InfrastructureMachineTemplate: desired},
+			}, resp)
+
+			require.Equal(t, runtimehooksv1.ResponseStatusSuccess, resp.Status, resp.Message)
+
+			if tt.declines {
+				assertDeclines(t, current, desired, resp.InfrastructureMachineTemplatePatch)
+			} else {
+				assertCovers(t, current, desired, resp.InfrastructureMachineTemplatePatch)
+			}
+		})
+	}
+}

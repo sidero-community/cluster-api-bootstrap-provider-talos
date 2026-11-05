@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -122,6 +123,15 @@ func (h *Handler) infraPatch(current, desired runtime.RawExtension, prefix strin
 		return runtimehooksv1.Patch{}, err
 	}
 
+	if prefix != "spec" {
+		// The allowlist is keyed by the machine kind, so a template must be looked up by
+		// the kind it stamps out. Anything that does not name one gets no patch.
+		var isTemplate bool
+		if gk, isTemplate = templatedGroupKind(gk); !isTemplate {
+			return runtimehooksv1.Patch{}, nil
+		}
+	}
+
 	paths, ok := infraPathsFor(gk)
 	if !ok {
 		return runtimehooksv1.Patch{}, nil
@@ -132,6 +142,19 @@ func (h *Handler) infraPatch(current, desired runtime.RawExtension, prefix strin
 	}
 
 	return mergePatchForPaths(currentObj, desiredObj, paths)
+}
+
+// templatedGroupKind returns the GroupKind of the objects an InfraMachineTemplate stamps
+// out, following the Cluster API convention that a template's kind is the machine kind with
+// a Template suffix (TinkerbellMachineTemplate stamps out TinkerbellMachines). It reports
+// false for a kind that does not follow the convention.
+func templatedGroupKind(gk schema.GroupKind) (schema.GroupKind, bool) {
+	kind, isTemplate := strings.CutSuffix(gk.Kind, "Template")
+	if !isTemplate || kind == "" {
+		return schema.GroupKind{}, false
+	}
+
+	return schema.GroupKind{Group: gk.Group, Kind: kind}, true
 }
 
 // patchBetween computes a patch between two typed objects.
