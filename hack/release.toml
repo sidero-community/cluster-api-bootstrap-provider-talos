@@ -6,28 +6,46 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.9.0"
+previous = "v0.9.1"
 
 pre_release = false
 
 [notes]
 
-[notes.upstream]
-    title = "Upstream sync"
+[notes.a-apiserver]
+    title = "In-place updates: kube-apiserver readiness"
     description = """\
-The fork is rebased onto the upstream `siderolabs/cluster-api-bootstrap-provider-talos` main
-and takes its fixes: the TalosConfig `Ready` condition is set again, summarizing
-`DataSecretAvailable` (it was never set since the move to v1beta2 conditions); the v1alpha3
-conversion no longer returns early for objects without a conversion-data annotation, so their
-status converts correctly; and the manager role gains the finalizer permissions on TalosConfigs
-and Clusters that Cluster API 1.14 expects. Machine configuration patches are no longer logged.
+On a control plane machine, the `UpdateMachine` runtime extension now waits for the node's
+kube-apiserver to absorb the applied configuration before reporting the in-place update
+complete. Talos restarts kube-apiserver itself when the configuration changes what it runs
+with, re-rendering the static pod for the kubelet to replace on its next poll; the extension
+used to report success right after the apply, so the control plane provider could move on to
+the next machine while this one's API server was still down, or roll a configuration
+kube-apiserver cannot start on across the whole control plane. The extension observes the
+static pod through the Talos resource API before the apply and completes only once a
+re-rendered pod has been replaced by one that started later and is Ready, or, when the change
+left the static pod alone, once the pod is Ready after a short settle window. Only the node's
+own observations are compared, so clock differences do not enter the decision. Worker machines
+are unaffected.
 """
 
-[notes.deps]
+[notes.b-cancel]
+    title = "In-place updates: cancellation on deletion"
+    description = """\
+A Talos upgrade the extension is running for a Machine is cancelled once that Machine is being
+deleted or is gone. Cluster API stops calling the extension for a deleting Machine, so nothing
+stopped a background upgrade from rebooting a node on its way out while the control plane
+provider was removing its etcd member and the infrastructure provider was about to wipe it.
+This is what lets the control plane provider remediate a machine in the middle of its own
+in-place update. The machine-service upgrade of nodes before Talos 1.13 runs on the node itself
+and cannot be cancelled.
+"""
+
+[notes.c-deps]
     title = "Dependencies"
     description = """\
-Kubernetes libraries 0.37.2, controller-runtime 0.25.2, Cluster API 1.14.3, Talos machinery
-1.14.5 and yaml.v3.
+No dependency updates; the COSI runtime, already present through the Talos machinery, becomes
+a direct dependency for the resource reads.
 """
 
 preface = """\
