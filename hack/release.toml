@@ -6,46 +6,28 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.9.1"
+previous = "v0.10.0"
 
 pre_release = false
 
 [notes]
 
-[notes.a-apiserver]
-    title = "In-place updates: kube-apiserver readiness"
+[notes.a-machineset]
+    title = "In-place updates: MachineSet infrastructure templates"
     description = """\
-On a control plane machine, the `UpdateMachine` runtime extension now waits for the node's
-kube-apiserver to absorb the applied configuration before reporting the in-place update
-complete. Talos restarts kube-apiserver itself when the configuration changes what it runs
-with, re-rendering the static pod for the kubelet to replace on its next poll; the extension
-used to report success right after the apply, so the control plane provider could move on to
-the next machine while this one's API server was still down, or roll a configuration
-kube-apiserver cannot start on across the whole control plane. The extension observes the
-static pod through the Talos resource API before the apply and completes only once a
-re-rendered pod has been replaced by one that started later and is Ready, or, when the change
-left the static pod alone, once the pod is Ready after a short settle window. Only the node's
-own observations are compared, so clock differences do not enter the decision. Worker machines
-are unaffected.
+`CanUpdateMachineSet` now absorbs provisioning-time-only infrastructure changes on a
+MachineSet, as `CanUpdateMachine` already did for a single Machine. The hook receives the
+MachineSet's InfraMachineTemplate, whose kind (`TinkerbellMachineTemplate`) never matched the
+machine kind the allowlist is keyed by (`TinkerbellMachine`), so every infrastructure change on a
+MachineSet, a Tink template edit included, fell back to a rolling replacement of its machines.
+The template's kind is now mapped to the kind it stamps out by dropping the `Template` suffix; a
+kind that does not follow that convention is still declined.
 """
 
-[notes.b-cancel]
-    title = "In-place updates: cancellation on deletion"
-    description = """\
-A Talos upgrade the extension is running for a Machine is cancelled once that Machine is being
-deleted or is gone. Cluster API stops calling the extension for a deleting Machine, so nothing
-stopped a background upgrade from rebooting a node on its way out while the control plane
-provider was removing its etcd member and the infrastructure provider was about to wipe it.
-This is what lets the control plane provider remediate a machine in the middle of its own
-in-place update. The machine-service upgrade of nodes before Talos 1.13 runs on the node itself
-and cannot be cancelled.
-"""
-
-[notes.c-deps]
+[notes.b-deps]
     title = "Dependencies"
     description = """\
-No dependency updates; the COSI runtime, already present through the Talos machinery, becomes
-a direct dependency for the resource reads.
+No dependency updates.
 """
 
 preface = """\
