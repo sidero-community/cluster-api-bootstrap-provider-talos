@@ -6,23 +6,23 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.10.1"
+previous = "v0.10.2"
 
 pre_release = false
 
 [notes]
 
-[notes.a-tasks]
-    title = "In-place updates: TinkerbellMachine tasks and boot options"
+[notes.a-provider-id]
+    title = "In-place updates: the PROVIDER_ID placeholder"
     description = """\
-Cluster API Provider Tinkerbell v0.10 adds `spec.tasks` to TinkerbellMachine: Tinkerbell v1alpha2
-Tasks, inline or by reference, each with its own boot options. CAPT reads them, like
-`spec.templateInline` and `spec.bootOptions`, only when it creates a machine's Workflow, so a
-running machine is never re-imaged when they change. The in-place allowlist now covers
-`spec.tasks` and the whole of `spec.bootOptions`; the boot mode was declined before, on the
-wrong assumption that it acts on a running machine. A MachineDeployment can therefore move
-from a template to Tasks without rolling out its machines. `spec.addressFromPool` stays
-excluded.
+A machine configuration can carry the literal `PROVIDER_ID` where the Machine's provider ID
+belongs, such as the kubelet's `provider-id` argument and the KubeletConfig `providerID`. The
+infrastructure provider replaces it when it delivers the configuration at provisioning: Cluster
+API Provider Tinkerbell writes the Hardware's user data with it replaced. The in-place
+`UpdateMachine` hook applied the bootstrap data secret as it was, so every in-place update set
+the running kubelet's provider ID to the literal `PROVIDER_ID`. It now replaces the placeholder
+with the Machine's `spec.providerID`, and refuses to apply a configuration that carries the
+placeholder when the Machine has no provider ID.
 """
 
 [notes.b-deps]
