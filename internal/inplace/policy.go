@@ -56,25 +56,30 @@ type InfraPolicy struct {
 var infraPolicies = map[schema.GroupKind]InfraPolicy{
 	{Group: "infrastructure.cluster.x-k8s.io", Kind: "TinkerbellMachine"}: {
 		Paths: []fieldPath{
-			// The Tink template describes how to image a machine. Cluster API Provider
-			// Tinkerbell short-circuits reconciliation once the Hardware carries
-			// HardwareProvisionedAnnotation=true, and only creates a Workflow when none
-			// exists, so editing the template never re-images a running machine. It takes
-			// effect the next time the machine is genuinely provisioned.
+			// What a machine is provisioned from: the deprecated Tink template, or the v1alpha2
+			// Task list with its per-entry boot options. Cluster API Provider Tinkerbell
+			// short-circuits reconciliation once the Hardware carries
+			// HardwareProvisionedAnnotation=true, and only creates a Workflow when none exists,
+			// so editing these never re-images a running machine. They take effect the next time
+			// the machine is genuinely provisioned.
 			"spec.templateInline",
 			"spec.templateRef",
+			"spec.tasks",
 
 			// Hardware selection already happened; spec.hardwareName is immutable in CAPT,
 			// so an affinity change cannot move a running machine to different hardware.
 			"spec.hardwareAffinity",
 
-			// Only consulted when netbooting. A machine running from disk is unaffected.
-			"spec.bootOptions.isoURL",
+			// CAPT reads the boot options only when it creates the Workflow, so the whole field
+			// (boot mode, ISO URL, customboot) is inert on a running machine, which boots from
+			// disk. Absorbing it also lets a MachineDeployment move its boot options onto the
+			// tasks entries without a rollout.
+			"spec.bootOptions",
 
 			// Deliberately excluded:
-			//   spec.bootOptions.bootMode  - changes how the machine boots, not inert
-			//   spec.hardwareName          - immutable in CAPT
-			//   spec.providerID            - immutable in CAPT
+			//   spec.hardwareName     - immutable in CAPT
+			//   spec.providerID       - immutable in CAPT
+			//   spec.addressFromPool  - immutable in CAPT once Hardware is selected
 		},
 	},
 }

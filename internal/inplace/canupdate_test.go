@@ -207,9 +207,23 @@ func TestCanUpdateMachine_InfrastructureMachine(t *testing.T) {
 			desired: map[string]any{"bootOptions": map[string]any{"isoURL": "http://b/x.iso", "bootMode": "isoboot"}},
 		},
 		{
-			name:     "boot mode change is declined",
-			current:  map[string]any{"bootOptions": map[string]any{"bootMode": "isoboot"}},
-			desired:  map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
+			name:    "boot mode change is absorbed",
+			current: map[string]any{"bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired: map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
+		},
+		{
+			name: "tasks change is absorbed",
+			current: map[string]any{"tasks": []any{
+				map[string]any{"name": "a", "taskRef": map[string]any{"name": "x"}},
+			}},
+			desired: map[string]any{"tasks": []any{
+				map[string]any{"name": "a", "taskRef": map[string]any{"name": "y"}, "bootOptions": map[string]any{"toggleNetboot": true}},
+			}},
+		},
+		{
+			name:     "address pool change is declined",
+			current:  map[string]any{"addressFromPool": map[string]any{"name": "p1"}},
+			desired:  map[string]any{"addressFromPool": map[string]any{"name": "p2"}},
 			declines: true,
 		},
 		{
@@ -363,17 +377,32 @@ func TestCanUpdateMachineSet_InfrastructureMachineTemplate(t *testing.T) {
 			desired: map[string]any{"hardwareAffinity": map[string]any{"required": []any{"b"}}},
 		},
 		{
-			name:     "boot mode change is declined",
-			kind:     "TinkerbellMachineTemplate",
-			current:  map[string]any{"bootOptions": map[string]any{"bootMode": "isoboot"}},
-			desired:  map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
-			declines: true,
+			name:    "boot mode change is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired: map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
 		},
 		{
-			name:     "tink template change alongside boot mode change is declined",
+			name:    "tink template change alongside boot mode change is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"templateInline": "old", "bootOptions": map[string]any{"bootMode": "isoboot"}},
+			desired: map[string]any{"templateInline": "new", "bootOptions": map[string]any{"bootMode": "netboot"}},
+		},
+		{
+			// Moving from a template to tasks, boot options onto the entries, is the migration
+			// CAPT's docs describe; it must not roll the machines out.
+			name:    "template to tasks migration is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"templateInline": "old", "bootOptions": map[string]any{"bootMode": "netboot"}},
+			desired: map[string]any{"tasks": []any{
+				map[string]any{"name": "a", "taskInline": map[string]any{"actions": []any{}}, "bootOptions": map[string]any{"toggleNetboot": true, "bootMode": "netboot"}},
+			}},
+		},
+		{
+			name:     "address pool change is declined",
 			kind:     "TinkerbellMachineTemplate",
-			current:  map[string]any{"templateInline": "old", "bootOptions": map[string]any{"bootMode": "isoboot"}},
-			desired:  map[string]any{"templateInline": "new", "bootOptions": map[string]any{"bootMode": "netboot"}},
+			current:  map[string]any{"addressFromPool": map[string]any{"name": "p1"}},
+			desired:  map[string]any{"addressFromPool": map[string]any{"name": "p2"}},
 			declines: true,
 		},
 		{
