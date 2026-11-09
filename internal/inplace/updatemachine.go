@@ -5,6 +5,7 @@
 package inplace
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"regexp"
@@ -375,7 +376,37 @@ func (h *Handler) desiredConfig(ctx context.Context, machine *clusterv1.Machine,
 		return nil, false, fmt.Errorf("could not compute the desired configuration hash")
 	}
 
+	data, err = withProviderID(data, machine)
+	if err != nil {
+		return nil, false, err
+	}
+
 	return data, secret.Annotations[bootstrapv1beta1.InPlaceConfigHashAnnotation] == expected, nil
+}
+
+// providerIDPlaceholder is the literal a machine configuration may carry where the Machine's
+// provider ID belongs, typically the kubelet's provider-id argument and the KubeletConfig
+// providerID. The provider ID is not known when the bootstrap data is generated, so the
+// infrastructure provider that delivers the configuration replaces the literal on delivery:
+// Cluster API Provider Tinkerbell writes the Hardware's user data with it replaced.
+const providerIDPlaceholder = "PROVIDER_ID"
+
+// withProviderID replaces providerIDPlaceholder in data with the Machine's provider ID.
+//
+// The in-place path delivers the configuration to the node itself, so it has to do what the
+// infrastructure provider did at provisioning. Applying the literal would hand a running
+// node's kubelet the placeholder as its provider ID, and a Node registered from that would
+// match no Machine.
+func withProviderID(data []byte, machine *clusterv1.Machine) ([]byte, error) {
+	if !bytes.Contains(data, []byte(providerIDPlaceholder)) {
+		return data, nil
+	}
+
+	if machine.Spec.ProviderID == "" {
+		return nil, fmt.Errorf("bootstrap data carries the %s placeholder but Machine %s/%s has no spec.providerID", providerIDPlaceholder, machine.Namespace, machine.Name)
+	}
+
+	return bytes.ReplaceAll(data, []byte(providerIDPlaceholder), []byte(machine.Spec.ProviderID)), nil
 }
 
 // desiredConfigHash recomputes, from the desired objects in the hook request, the hash CABPT

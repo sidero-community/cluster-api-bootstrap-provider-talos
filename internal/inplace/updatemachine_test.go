@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -302,6 +303,69 @@ func TestUpdateMachine_AppliesConfigWhenFresh(t *testing.T) {
 	assert.Empty(t, f.node.upgrades, "running version already matches the desired image")
 	assert.Zero(t, resp.RetryAfterSeconds, "config-only change should complete")
 	assert.Zero(t, f.node.apiServerCalls, "a worker has no kube-apiserver to wait for")
+}
+
+// withPlaceholderKubelet adds the kubelet provider-id argument, set to the placeholder, to a
+// machine configuration from machineConfigWithImage.
+func withPlaceholderKubelet(config string) string {
+	return strings.Replace(config, "machine:\n", "machine:\n  kubelet:\n    extraArgs:\n      provider-id: PROVIDER_ID\n", 1)
+}
+
+// setSecretData replaces the fixture's bootstrap data, keeping its hash annotation.
+func (f *updateFixture) setSecretData(t *testing.T, data string) {
+	t.Helper()
+
+	secret := &corev1.Secret{}
+	key := types.NamespacedName{Namespace: "default", Name: "machine-1-bootstrap-data"}
+	require.NoError(t, f.handler.client.Get(context.Background(), key, secret))
+	secret.Data["value"] = []byte(data)
+	require.NoError(t, f.handler.client.Update(context.Background(), secret))
+}
+
+// The bootstrap data carries the provider ID placeholder that the infrastructure provider
+// replaces when it delivers the configuration at provisioning. The in-place path delivers it
+// itself, so it must replace it too: applying the literal would hand the running kubelet
+// "PROVIDER_ID" as its provider ID.
+func TestUpdateMachine_ReplacesTheProviderIDPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
+	f.setSecretData(t, withPlaceholderKubelet(machineConfigWithImage("ghcr.io/siderolabs/installer:v1.13.0")))
+	f.request.Desired.Machine.Spec.ProviderID = "tinkerbell://default/hw-1"
+
+	resp := f.update(t)
+
+	assert.Zero(t, resp.RetryAfterSeconds)
+	require.Len(t, f.node.applied, 1)
+	assert.Contains(t, string(f.node.applied[0]), "provider-id: tinkerbell://default/hw-1")
+	assert.NotContains(t, string(f.node.applied[0]), providerIDPlaceholder)
+}
+
+// Without a provider ID there is nothing to put in the placeholder's place, and applying the
+// literal is exactly what must not happen.
+func TestUpdateMachine_RefusesThePlaceholderWithoutAProviderID(t *testing.T) {
+	t.Parallel()
+
+	f := newUpdateFixture(t, "v1.13.0", "ghcr.io/siderolabs/installer:v1.13.0", freshHash(t), "")
+	f.setSecretData(t, withPlaceholderKubelet(machineConfigWithImage("ghcr.io/siderolabs/installer:v1.13.0")))
+
+	resp := &runtimehooksv1.UpdateMachineResponse{}
+	f.handler.DoUpdateMachine(context.Background(), f.request, resp)
+
+	assert.Equal(t, runtimehooksv1.ResponseStatusFailure, resp.Status)
+	assert.Contains(t, resp.Message, "failed to resolve desired machine configuration")
+	assert.Empty(t, f.node.applied, "must not apply the placeholder")
+}
+
+// A configuration without the placeholder is applied as it is, provider ID or not.
+func TestWithProviderIDLeavesDataWithoutThePlaceholderAlone(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(machineConfigWithImage("ghcr.io/siderolabs/installer:v1.13.0"))
+
+	got, err := withProviderID(data, &clusterv1.Machine{})
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
 }
 
 // Talos restarts kube-apiserver itself when the configuration changes what it runs with. The
