@@ -6,22 +6,23 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.10.0"
+previous = "v0.10.1"
 
 pre_release = false
 
 [notes]
 
-[notes.a-machineset]
-    title = "In-place updates: MachineSet infrastructure templates"
+[notes.a-tasks]
+    title = "In-place updates: TinkerbellMachine tasks and boot options"
     description = """\
-`CanUpdateMachineSet` now absorbs provisioning-time-only infrastructure changes on a
-MachineSet, as `CanUpdateMachine` already did for a single Machine. The hook receives the
-MachineSet's InfraMachineTemplate, whose kind (`TinkerbellMachineTemplate`) never matched the
-machine kind the allowlist is keyed by (`TinkerbellMachine`), so every infrastructure change on a
-MachineSet, a Tink template edit included, fell back to a rolling replacement of its machines.
-The template's kind is now mapped to the kind it stamps out by dropping the `Template` suffix; a
-kind that does not follow that convention is still declined.
+Cluster API Provider Tinkerbell v0.10 adds `spec.tasks` to TinkerbellMachine: Tinkerbell v1alpha2
+Tasks, inline or by reference, each with its own boot options. CAPT reads them, like
+`spec.templateInline` and `spec.bootOptions`, only when it creates a machine's Workflow, so a
+running machine is never re-imaged when they change. The in-place allowlist now covers
+`spec.tasks` and the whole of `spec.bootOptions`; the boot mode was declined before, on the
+wrong assumption that it acts on a running machine. A MachineDeployment can therefore move
+from a template to Tasks without rolling out its machines. `spec.addressFromPool` stays
+excluded.
 """
 
 [notes.b-deps]
