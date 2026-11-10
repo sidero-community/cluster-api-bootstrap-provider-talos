@@ -32,7 +32,11 @@ func (p fieldPath) segments() []string {
 // extension declines every field it does not name, simply by leaving it alone.
 //
 // Paths that are absent from desired but present in current are set to null, so that
-// clearing a field is expressed correctly rather than being silently skipped.
+// clearing a field is expressed correctly rather than being silently skipped. The same holds
+// inside a path whose value is an object on both sides: Cluster API merges the patch into the
+// current object, so the patch carries the difference (see mergeDiff), naming each key the
+// desired object dropped with null, rather than the desired object, whose missing keys
+// would leave the current ones in place.
 //
 // Returns an undefined Patch when the named paths already agree, which is the correct
 // "nothing to do" answer rather than an error.
@@ -68,7 +72,7 @@ func mergePatchForPaths(current, desired map[string]any, paths []fieldPath) (run
 				return runtimehooksv1.Patch{}, err
 			}
 		default:
-			if err := setNested(patch, desiredValue, segments); err != nil {
+			if err := setNested(patch, mergeDiff(currentValue, desiredValue), segments); err != nil {
 				return runtimehooksv1.Patch{}, err
 			}
 		}
@@ -89,6 +93,40 @@ func mergePatchForPaths(current, desired map[string]any, paths []fieldPath) (run
 		PatchType: runtimehooksv1.JSONMergePatchType,
 		Patch:     encoded,
 	}, nil
+}
+
+// mergeDiff returns the JSON merge patch that turns current into desired. Between two
+// objects it holds, recursively, the keys whose values differ, and null for each key desired
+// does not have; anything else, a list included, is replaced whole by desired, as a merge
+// patch cannot address the items of a list.
+func mergeDiff(current, desired any) any {
+	currentObject, currentIsObject := current.(map[string]any)
+	desiredObject, desiredIsObject := desired.(map[string]any)
+
+	if !currentIsObject || !desiredIsObject {
+		return desired
+	}
+
+	diff := map[string]any{}
+
+	for key, desiredValue := range desiredObject {
+		currentValue, found := currentObject[key]
+
+		switch {
+		case !found:
+			diff[key] = desiredValue
+		case !reflect.DeepEqual(currentValue, desiredValue):
+			diff[key] = mergeDiff(currentValue, desiredValue)
+		}
+	}
+
+	for key := range currentObject {
+		if _, found := desiredObject[key]; !found {
+			diff[key] = nil
+		}
+	}
+
+	return diff
 }
 
 // setNested writes value at the given path, creating intermediate maps as needed.

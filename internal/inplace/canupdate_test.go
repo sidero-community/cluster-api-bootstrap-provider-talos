@@ -133,6 +133,18 @@ func TestCanUpdateMachine_BootstrapConfig(t *testing.T) {
 			}},
 		},
 		{
+			// A merge patch merges objects, so a key removed inside one survives unless the
+			// patch names it with null.
+			name: "removing an image factory key is absorbed",
+			current: map[string]any{"generateType": "worker", "imageFactory": map[string]any{
+				"extensions": []any{"siderolabs/nvme-cli"},
+				"bootloader": "sd-boot",
+			}},
+			desired: map[string]any{"generateType": "worker", "imageFactory": map[string]any{
+				"extensions": []any{"siderolabs/nvme-cli"},
+			}},
+		},
+		{
 			name:    "clearing a field is absorbed",
 			current: map[string]any{"generateType": "worker", "talosVersion": "v1.12"},
 			desired: map[string]any{"generateType": "worker"},
@@ -235,6 +247,46 @@ func TestCanUpdateMachine_InfrastructureMachine(t *testing.T) {
 			desired: map[string]any{"vars": map[string]any{"k": "b"}},
 		},
 		{
+			name:    "removing the iso url is absorbed",
+			current: map[string]any{"bootOptions": map[string]any{"isoURL": "http://a/x.iso", "bootMode": "isoboot"}},
+			desired: map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
+		},
+		{
+			name:    "emptying the boot options is absorbed",
+			current: map[string]any{"bootOptions": map[string]any{"isoURL": "http://a/x.iso", "bootMode": "isoboot"}},
+			desired: map[string]any{"bootOptions": map[string]any{}},
+		},
+		{
+			name:    "removing the template ref namespace is absorbed",
+			current: map[string]any{"templateRef": map[string]any{"name": "t", "namespace": "tink"}},
+			desired: map[string]any{"templateRef": map[string]any{"name": "t"}},
+		},
+		{
+			name:    "removing the preferred hardware affinity is absorbed",
+			current: map[string]any{"hardwareAffinity": map[string]any{"required": []any{"a"}, "preferred": []any{"b"}}},
+			desired: map[string]any{"hardwareAffinity": map[string]any{"required": []any{"a"}}},
+		},
+		{
+			name: "removing a reference is absorbed",
+			current: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+				"other": map[string]any{"version": "v1", "resource": "configmaps", "name": "c", "namespace": "capi"},
+			}},
+			desired: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+			}},
+		},
+		{
+			name:    "removing a reference namespace is absorbed",
+			current: map[string]any{"references": map[string]any{"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a", "namespace": "capi"}}},
+			desired: map[string]any{"references": map[string]any{"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"}}},
+		},
+		{
+			name:    "removing a var is absorbed",
+			current: map[string]any{"vars": map[string]any{"k": "a", "gone": "b"}},
+			desired: map[string]any{"vars": map[string]any{"k": "a"}},
+		},
+		{
 			name:     "address pool change is declined",
 			current:  map[string]any{"addressFromPool": map[string]any{"name": "p1"}},
 			desired:  map[string]any{"addressFromPool": map[string]any{"name": "p2"}},
@@ -244,6 +296,14 @@ func TestCanUpdateMachine_InfrastructureMachine(t *testing.T) {
 			name:     "hardware name change is declined",
 			current:  map[string]any{"hardwareName": "hw-1"},
 			desired:  map[string]any{"hardwareName": "hw-2"},
+			declines: true,
+		},
+		{
+			// Removals are expressed only for allowlisted paths: one inside a field the
+			// extension declines is left behind, so the machine still rolls out.
+			name:     "removing a key inside the address pool is declined",
+			current:  map[string]any{"addressFromPool": map[string]any{"apiGroup": "ipam.cluster.x-k8s.io", "name": "p1"}},
+			desired:  map[string]any{"addressFromPool": map[string]any{"name": "p1"}},
 			declines: true,
 		},
 	} {
@@ -427,6 +487,29 @@ func TestCanUpdateMachineSet_InfrastructureMachineTemplate(t *testing.T) {
 			kind:    "TinkerbellMachineTemplate",
 			current: map[string]any{"vars": map[string]any{"k": "a"}},
 			desired: map[string]any{"vars": map[string]any{"k": "b"}},
+		},
+		{
+			name:    "removing the iso url is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"bootOptions": map[string]any{"isoURL": "http://a/x.iso", "bootMode": "isoboot"}},
+			desired: map[string]any{"bootOptions": map[string]any{"bootMode": "netboot"}},
+		},
+		{
+			name: "removing a reference is absorbed",
+			kind: "TinkerbellMachineTemplate",
+			current: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+				"other": map[string]any{"version": "v1", "resource": "configmaps", "name": "c"},
+			}},
+			desired: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+			}},
+		},
+		{
+			name:    "removing a var is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"vars": map[string]any{"k": "a", "gone": "b"}},
+			desired: map[string]any{"vars": map[string]any{"k": "a"}},
 		},
 		{
 			name:     "address pool change is declined",
