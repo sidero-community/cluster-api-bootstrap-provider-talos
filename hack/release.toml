@@ -6,26 +6,35 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.10.2"
+previous = "v0.10.3"
 
 pre_release = false
 
 [notes]
 
-[notes.a-provider-id]
-    title = "In-place updates: the PROVIDER_ID placeholder"
+[notes.a-references]
+    title = "In-place updates: TinkerbellMachine references and vars"
     description = """\
-A machine configuration can carry the literal `PROVIDER_ID` where the Machine's provider ID
-belongs, such as the kubelet's `provider-id` argument and the KubeletConfig `providerID`. The
-infrastructure provider replaces it when it delivers the configuration at provisioning: Cluster
-API Provider Tinkerbell writes the Hardware's user data with it replaced. The in-place
-`UpdateMachine` hook applied the bootstrap data secret as it was, so every in-place update set
-the running kubelet's provider ID to the literal `PROVIDER_ID`. It now replaces the placeholder
-with the Machine's `spec.providerID`, and refuses to apply a configuration that carries the
-placeholder when the Machine has no provider ID.
+Cluster API Provider Tinkerbell v0.11 adds `spec.references` and `spec.vars` to
+TinkerbellMachine, so that a machine's Tasks can read that machine's own objects, such as the
+installer image CABPT pins in its TalosConfig. CAPT reads them, like `spec.tasks`, only when it
+creates the machine's Workflow, so a running machine is never re-imaged when they change. The
+in-place allowlist now covers both, and changing them no longer rolls the machines out.
 """
 
-[notes.b-deps]
+[notes.b-removed-keys]
+    title = "In-place updates: keys removed inside a field"
+    description = """\
+The in-place answer set each field it absorbs to its desired value. Cluster API merges that
+answer into the current object, so a key removed inside an object field survived, the result
+still differed from the desired object, and the machine was rolled out instead: for example
+removing `bootOptions.isoURL`, `templateRef.namespace` or `hardwareAffinity.preferred` from a
+TinkerbellMachine, a key of a TalosConfig's `imageFactory`, or a reference or var. The answer
+now names each removed key with null, so these changes are made in place. A removal inside a
+field the extension does not absorb, such as `addressFromPool`, still rolls out.
+"""
+
+[notes.c-deps]
     title = "Dependencies"
     description = """\
 No dependency updates.
