@@ -221,6 +221,20 @@ func TestCanUpdateMachine_InfrastructureMachine(t *testing.T) {
 			}},
 		},
 		{
+			name: "references change is absorbed",
+			current: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+			}},
+			desired: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "b"},
+			}},
+		},
+		{
+			name:    "vars change is absorbed",
+			current: map[string]any{"vars": map[string]any{"k": "a"}},
+			desired: map[string]any{"vars": map[string]any{"k": "b"}},
+		},
+		{
 			name:     "address pool change is declined",
 			current:  map[string]any{"addressFromPool": map[string]any{"name": "p1"}},
 			desired:  map[string]any{"addressFromPool": map[string]any{"name": "p2"}},
@@ -397,6 +411,22 @@ func TestCanUpdateMachineSet_InfrastructureMachineTemplate(t *testing.T) {
 			desired: map[string]any{"tasks": []any{
 				map[string]any{"name": "a", "taskInline": map[string]any{"actions": []any{}}, "bootOptions": map[string]any{"toggleNetboot": true, "bootMode": "netboot"}},
 			}},
+		},
+		{
+			name: "references change is absorbed",
+			kind: "TinkerbellMachineTemplate",
+			current: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "a"},
+			}},
+			desired: map[string]any{"references": map[string]any{
+				"talos": map[string]any{"version": "v1beta1", "resource": "talosconfigs", "name": "b"},
+			}},
+		},
+		{
+			name:    "vars change is absorbed",
+			kind:    "TinkerbellMachineTemplate",
+			current: map[string]any{"vars": map[string]any{"k": "a"}},
+			desired: map[string]any{"vars": map[string]any{"k": "b"}},
 		},
 		{
 			name:     "address pool change is declined",

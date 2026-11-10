@@ -61,10 +61,13 @@ var infraPolicies = map[schema.GroupKind]InfraPolicy{
 			// short-circuits reconciliation once the Hardware carries
 			// HardwareProvisionedAnnotation=true, and only creates a Workflow when none exists,
 			// so editing these never re-images a running machine. They take effect the next time
-			// the machine is genuinely provisioned.
+			// the machine is genuinely provisioned. The same holds for the references and vars
+			// CAPT puts on a Task Workflow: it reads them only when it creates the Workflow.
 			"spec.templateInline",
 			"spec.templateRef",
 			"spec.tasks",
+			"spec.references",
+			"spec.vars",
 
 			// Hardware selection already happened; spec.hardwareName is immutable in CAPT,
 			// so an affinity change cannot move a running machine to different hardware.
