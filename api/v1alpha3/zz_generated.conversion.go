@@ -304,6 +304,7 @@ func autoConvert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(in *v1beta1
 		return err
 	}
 	// WARNING: in.ImageFactory requires manual conversion: does not exist in peer-type
+	// WARNING: in.RestrictJoin requires manual conversion: does not exist in peer-type
 	return nil
 }
 

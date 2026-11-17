@@ -16,6 +16,10 @@ import (
 // reboot, and UpdateMachine upgrades the node only when the image tag names a Talos
 // version the node is not already running.
 //
+// spec.restrictJoin changes two things the node only reads when it registers: the labels the
+// kubelet creates its Node with and, for a worker, its bootstrap token. Applying them restarts
+// the kubelet and nothing else.
+//
 // spec.generateType is deliberately absent: it selects the machine's role, and turning a
 // worker into a control plane node is not something applying a config can accomplish. That
 // change must remain a rolling replacement.
@@ -26,6 +30,7 @@ var talosConfigPaths = []fieldPath{
 	"spec.hostname",
 	"spec.talosVersion",
 	"spec.imageFactory",
+	"spec.restrictJoin",
 }
 
 // machinePaths are the core Machine spec fields an in-place update can deliver.

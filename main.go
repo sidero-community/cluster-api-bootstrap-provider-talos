@@ -211,6 +211,15 @@ func setupReconcilers(ctx context.Context, mgr manager.Manager) {
 		os.Exit(1)
 	}
 
+	if err := (&controllers.JoinGateReconciler{
+		Client:           mgr.GetClient(),
+		Log:              ctrl.Log.WithName("controllers").WithName("JoinGate"),
+		WatchFilterValue: watchFilterValue,
+	}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: 4}); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "JoinGate")
+		os.Exit(1)
+	}
+
 	if enableRuntimeExtension {
 		setupLog.Info("enabling the in-place update runtime extension", "port", runtimeExtensionPort)
 

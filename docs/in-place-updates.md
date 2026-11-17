@@ -16,6 +16,7 @@ Talos, so these changes can instead be applied to the running machine.
 | `TalosConfig.spec.configPatches` / `strategicPatches` / `data` / `hostname` | yes | config regenerated, applied with `ApplyConfiguration` in `AUTO` mode — Talos decides whether a reboot is needed |
 | `TalosConfig.spec.talosVersion` | yes | as above; changes the config contract used for generation |
 | `TalosConfig.spec.imageFactory` | yes | config regenerated with the new installer image (an `UnattendedInstallConfig` document from Talos 1.14, `machine.install.image` before); the node is upgraded only if the image tag names a Talos version it is not already running |
+| `TalosConfig.spec.restrictJoin` | yes | config regenerated with the join ID label and, for a worker, its own bootstrap token; the kubelet restarts. A Node that already exists keeps registering as it is, see [Restricting which machines can join](../README.md#restricting-which-machines-can-join) |
 | `Machine.spec.version` (Kubernetes) | yes | the version feeds the control plane component and kubelet images in the machine config |
 | Talos OS version (installer image) | yes | Talos 1.13+: lifecycle service (pull, install, reboot), driven in the background and reported on each hook call; older nodes: the machine service `Upgrade`. Talos cordons and drains the node itself on reboot |
 | `TalosConfig.spec.generateType` | **no** | a worker↔control plane role flip cannot be applied to a running node |

@@ -118,6 +118,16 @@ func TestCanUpdateMachine_BootstrapConfig(t *testing.T) {
 			desired: map[string]any{"generateType": "worker", "strategicPatches": []any{"b"}},
 		},
 		{
+			name:    "restricting joining is absorbed",
+			current: map[string]any{"generateType": "worker"},
+			desired: map[string]any{"generateType": "worker", "restrictJoin": true},
+		},
+		{
+			name:    "lifting the join restriction is absorbed",
+			current: map[string]any{"generateType": "worker", "restrictJoin": true},
+			desired: map[string]any{"generateType": "worker"},
+		},
+		{
 			name:    "adding an image factory block is absorbed",
 			current: map[string]any{"generateType": "worker"},
 			desired: map[string]any{"generateType": "worker", "imageFactory": map[string]any{"extensions": []any{"siderolabs/nvme-cli"}}},

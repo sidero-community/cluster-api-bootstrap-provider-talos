@@ -73,33 +73,44 @@ retry:
 		return nil, fmt.Errorf("error reading secrets bundle: %w", err)
 	default:
 		// successfully loaded secret, initialize secretsBundle from it
-		secretsBundle = &secrets.Bundle{
-			Clock: secrets.NewFixedClock(time.Now()),
-		}
-
-		if _, ok := secret.Data["bundle"]; ok {
-			// new format
-			if err = yaml.Unmarshal(secret.Data["bundle"], secretsBundle); err != nil {
-				return nil, fmt.Errorf("error unmarshaling secrets bundle: %w", err)
-			}
-		} else {
-			// legacy format
-			if err = yaml.Unmarshal(secret.Data["certs"], &secretsBundle.Certs); err != nil {
-				return nil, fmt.Errorf("error unmarshaling certs: %w", err)
-			}
-
-			if err = yaml.Unmarshal(secret.Data["kubeSecrets"], &secretsBundle.Secrets); err != nil {
-				return nil, fmt.Errorf("error unmarshaling secrets: %w", err)
-			}
-
-			if err = yaml.Unmarshal(secret.Data["trustdInfo"], &secretsBundle.TrustdInfo); err != nil {
-				return nil, fmt.Errorf("error unmarshaling trustd info: %w", err)
-			}
-
-			// not stored in legacy format, use empty values
-			secretsBundle.Cluster = &secrets.Cluster{}
+		if secretsBundle, err = decodeSecretsBundle(secret); err != nil {
+			return nil, err
 		}
 	}
+
+	return secretsBundle, nil
+}
+
+// decodeSecretsBundle reads the cluster's secrets bundle out of its <cluster>-talos Secret.
+func decodeSecretsBundle(secret *corev1.Secret) (*secrets.Bundle, error) {
+	secretsBundle := &secrets.Bundle{
+		Clock: secrets.NewFixedClock(time.Now()),
+	}
+
+	if _, ok := secret.Data["bundle"]; ok {
+		// new format
+		if err := yaml.Unmarshal(secret.Data["bundle"], secretsBundle); err != nil {
+			return nil, fmt.Errorf("error unmarshaling secrets bundle: %w", err)
+		}
+
+		return secretsBundle, nil
+	}
+
+	// legacy format
+	if err := yaml.Unmarshal(secret.Data["certs"], &secretsBundle.Certs); err != nil {
+		return nil, fmt.Errorf("error unmarshaling certs: %w", err)
+	}
+
+	if err := yaml.Unmarshal(secret.Data["kubeSecrets"], &secretsBundle.Secrets); err != nil {
+		return nil, fmt.Errorf("error unmarshaling secrets: %w", err)
+	}
+
+	if err := yaml.Unmarshal(secret.Data["trustdInfo"], &secretsBundle.TrustdInfo); err != nil {
+		return nil, fmt.Errorf("error unmarshaling trustd info: %w", err)
+	}
+
+	// not stored in legacy format, use empty values
+	secretsBundle.Cluster = &secrets.Cluster{}
 
 	return secretsBundle, nil
 }

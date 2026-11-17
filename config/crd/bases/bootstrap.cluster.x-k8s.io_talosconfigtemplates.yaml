@@ -254,6 +254,23 @@ spec:
                             - name
                             type: object
                         type: object
+                      restrictJoin:
+                        description: |-
+                          RestrictJoin ties the machine's right to join Kubernetes to its owner in Cluster API.
+
+                          The rendered configuration makes the kubelet register its Node with the label
+                          bootstrap.cluster.x-k8s.io/talos-join-id set to the UID of the owning Machine (or
+                          MachinePool). CABPT keeps an allowlist of the join IDs of living owners in the workload
+                          cluster, and a ValidatingAdmissionPolicy there refuses a kubelet that registers a Node
+                          with any other ID, so a disk left over from a deleted Machine cannot come back.
+
+                          A worker owned by a Machine also gets a Kubernetes bootstrap token of its own in place
+                          of the cluster-wide one. The token only exists in the workload cluster while the Machine
+                          lives and its Node is not ready.
+
+                          The policy only refuses registrations once every Machine of the cluster is covered,
+                          either by this field or by an existing Node; until then it warns.
+                        type: boolean
                       strategicPatches:
                         description: Talos Linux machine configuration strategic merge
                           patch list.

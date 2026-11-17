@@ -466,6 +466,10 @@ func (r *TalosConfigReconciler) reconcileGenerate(ctx context.Context, tcScope *
 		}
 	}
 
+	if retData.BootstrapData, err = r.restrictJoin(ctx, tcScope, retData.BootstrapData); err != nil {
+		return err
+	}
+
 	// Packet acts a fool if you don't prepend #!talos to the userdata
 	// so we try to suss out if that's the type of machine/machinePool getting created.
 	if tcScope.ConfigOwner.IsMachinePool() {

@@ -30,6 +30,7 @@ func (src *TalosConfig) ConvertTo(dstRaw conversion.Hub) error {
 
 	// spec.imageFactory and status.imageFactory exist only in the hub.
 	dst.Spec.ImageFactory = restored.Spec.ImageFactory
+	dst.Spec.RestrictJoin = restored.Spec.RestrictJoin
 	dst.Status.ImageFactory = restored.Status.ImageFactory
 
 	// Recover intent for bool values converted to *bool.
@@ -85,6 +86,7 @@ func (src *TalosConfigTemplate) ConvertTo(dstRaw conversion.Hub) error {
 
 	// spec.template.spec.imageFactory exists only in the hub.
 	dst.Spec.Template.Spec.ImageFactory = restored.Spec.Template.Spec.ImageFactory
+	dst.Spec.Template.Spec.RestrictJoin = restored.Spec.Template.Spec.RestrictJoin
 
 	// spec.template.metadata has no v1alpha3 peer, so it only survives via the annotation.
 	dst.Spec.Template.ObjectMeta = restored.Spec.Template.ObjectMeta

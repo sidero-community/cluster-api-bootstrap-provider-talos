@@ -194,6 +194,47 @@ spec:
       $patch: delete
 ```
 
+### Restricting which machines can join
+
+By default every worker configuration of a cluster carries the same Kubernetes bootstrap token, and it never expires.
+A disk that still holds the configuration of a deleted `Machine` can therefore boot and join again, and Cluster API will take its Node for whatever `Machine` now sits on that hardware.
+
+`restrictJoin` ties joining to the `Machine` in the management cluster:
+
+```yaml
+spec:
+  generateType: worker
+  restrictJoin: true
+```
+
+With it set, CABPT does two things.
+
+- **Join ID.** The kubelet registers its Node with the label `bootstrap.cluster.x-k8s.io/talos-join-id`, set to the UID of the owning `Machine` (or `MachinePool`).
+  CABPT keeps the join IDs of living owners in the ConfigMap `kube-system/talos-join-allowlist` of the workload cluster, and installs a `ValidatingAdmissionPolicy` (`talos-join.bootstrap.cluster.x-k8s.io`) that refuses a kubelet creating a Node with any other ID.
+  The ID of a `Machine` leaves the allowlist when the `Machine` starts being deleted.
+- **Join token.** A worker owned by a `Machine` gets a bootstrap token of its own in `cluster.token`, derived from the cluster's Kubernetes CA key and the `Machine` UID.
+  Its Secret exists in the workload cluster only while the `Machine` lives and its Node is not ready, so the configuration of a deleted `Machine` cannot request a kubelet certificate.
+  Control plane machines, `MachinePool` members and `generateType: none` keep the cluster-wide token.
+
+The policy protects the cluster only once it covers every machine, and it is careful not to lock one out on the way there:
+
+- A `Machine` without `restrictJoin` (or bootstrapped by another provider) is admitted by the name of its Node, once it has one.
+- While any living `Machine` has neither a join ID nor a Node, and while any `MachinePool` is without `restrictJoin`, the policy only warns and audits.
+  The allowlist's `bootstrap.cluster.x-k8s.io/talos-join-enforcement` annotation says `Deny` or `Warn`, and `talos-join-uncovered` names the machines holding it at `Warn`.
+- Nothing is installed before the control plane is initialized, and everything is removed again when the last `TalosConfig` drops the field.
+
+Set the field on the control plane and on every worker template to reach `Deny` and stay there.
+On running machines it is delivered [in place](docs/in-place-updates.md); the Nodes they already have are not affected, since only the creation of a Node is checked.
+
+What it does not do:
+
+- It is not proof against impersonation. A machine holding the configuration of a living `Machine` can register as that `Machine`.
+- It does not revoke kubelet certificates. A stale node that still holds one is stopped by the join ID, not by the token.
+- The cluster-wide token stays valid for control plane machines, so worker configurations rendered before `restrictJoin` was set keep working as tokens until those machines are replaced.
+- A node whose `Machine` has `restrictJoin` set but whose configuration has not been updated in place yet cannot register again if its Node is deleted in the meantime.
+
+The policy needs Kubernetes 1.30 or later. CABPT reaches the workload cluster through the `<cluster>-kubeconfig` Secret.
+
 ### Retrieving `talosconfig`
 
 Client-side `talosconfig` is required to access the cluster using Talos API.
