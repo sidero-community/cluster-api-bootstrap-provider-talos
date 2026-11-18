@@ -6,35 +6,37 @@ github_repo = "sidero-community/cluster-api-bootstrap-provider-talos"
 match_deps = "^github.com/(siderolabs/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.10.3"
+previous = "v0.10.4"
 
 pre_release = false
 
 [notes]
 
-[notes.a-references]
-    title = "In-place updates: TinkerbellMachine references and vars"
+[notes.a-restrict-join]
+    title = "Restricting which machines can join"
     description = """\
-Cluster API Provider Tinkerbell v0.11 adds `spec.references` and `spec.vars` to
-TinkerbellMachine, so that a machine's Tasks can read that machine's own objects, such as the
-installer image CABPT pins in its TalosConfig. CAPT reads them, like `spec.tasks`, only when it
-creates the machine's Workflow, so a running machine is never re-imaged when they change. The
-in-place allowlist now covers both, and changing them no longer rolls the machines out.
+A TalosConfig can now set `spec.restrictJoin`, which ties joining Kubernetes to a living Cluster
+API Machine. The kubelet registers its Node with the label
+`bootstrap.cluster.x-k8s.io/talos-join-id`, whose value is the UID of the Machine (or
+MachinePool) that owns the configuration. The provider keeps an allowlist of the living owners
+in the workload cluster (`kube-system/talos-join-allowlist`) with a ValidatingAdmissionPolicy
+that refuses a kubelet registering a Node that is not on it, so a disk that outlives its Machine
+cannot register again. A worker owned by a Machine also gets a bootstrap token of its own,
+derived from the cluster's Kubernetes CA key and the Machine's UID; its Secret exists in the
+workload cluster only while the Machine lives and its Node is not Ready.
+
+The policy refuses only once every living Machine is covered, by a join ID or by an existing
+Node; until then it warns and audits. Clusters that never set the field are not touched, and the
+policy is removed when the last TalosConfig drops it. The field is absorbed in place.
+
+Limits: the policy needs Kubernetes 1.30 or later; the cluster-wide token stays valid, so a
+worker configuration rendered before the field was set can still request a certificate; a
+machine holding a living Machine's configuration can register as that Machine; MachinePool
+members and user-supplied configurations (`generateType: none`) keep the cluster-wide token. See
+"Restricting which machines can join" in the README.
 """
 
-[notes.b-removed-keys]
-    title = "In-place updates: keys removed inside a field"
-    description = """\
-The in-place answer set each field it absorbs to its desired value. Cluster API merges that
-answer into the current object, so a key removed inside an object field survived, the result
-still differed from the desired object, and the machine was rolled out instead: for example
-removing `bootOptions.isoURL`, `templateRef.namespace` or `hardwareAffinity.preferred` from a
-TinkerbellMachine, a key of a TalosConfig's `imageFactory`, or a reference or var. The answer
-now names each removed key with null, so these changes are made in place. A removal inside a
-field the extension does not absorb, such as `addressFromPool`, still rolls out.
-"""
-
-[notes.c-deps]
+[notes.b-deps]
     title = "Dependencies"
     description = """\
 No dependency updates.
